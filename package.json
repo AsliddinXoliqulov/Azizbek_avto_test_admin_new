@@ -8,11 +8,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "import:base": "node scripts/import-base.mjs",
+    "replace:images": "node scripts/replace-images.mjs",
     "generate:base-seed": "node scripts/generate-base-seed.mjs",
     "seed:remote": "node scripts/seed-base-remote.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.5"

@@ -1,6 +1,38 @@
 export type AdminRole = 'SUPER_ADMIN' | 'SUB_ADMIN'
 export type CategoryKind = 'TOPIC' | 'ROAD_SIGN' | 'CHEATSHEET'
 export type QuestionStatus = 'DRAFT' | 'PUBLISHED'
+export type QuestionLocale = 'uz-Latn' | 'uz-Cyrl' | 'ru'
+export type LocalizedText = Record<QuestionLocale, string>
+
+export const QUESTION_LOCALES: QuestionLocale[] = ['uz-Latn', 'uz-Cyrl', 'ru']
+export const QUESTION_LOCALE_LABELS: Record<QuestionLocale, string> = {
+  'uz-Latn': 'O‘zbekcha',
+  'uz-Cyrl': 'Ўзбекча',
+  ru: 'Русский',
+}
+
+export interface BaseSection {
+  id: number
+  sort_order: number
+  name: Partial<LocalizedText>
+  is_deleted: boolean
+}
+
+export interface BaseLesson {
+  id: number
+  section_id: number | null
+  sort_order: number
+  title: Partial<LocalizedText>
+  is_deleted: boolean
+}
+
+export interface ManualVariant {
+  id: number
+  title: Partial<LocalizedText>
+  sort_order: number
+  is_deleted: boolean
+  updated_at: string
+}
 
 export interface AdminProfile {
   id: string
@@ -42,6 +74,9 @@ export interface Question {
   is_tricky: boolean
   is_road_sign: boolean
   is_numeric: boolean
+  is_new?: boolean
+  is_similar?: boolean
+  source_question_id?: number | null
   status: QuestionStatus
   is_deleted: boolean
   created_at: string
@@ -71,6 +106,7 @@ export interface ActivationToken {
   device_id: string | null
   activated_at: string | null
   created_by: string | null
+  validity_days?: 0 | 15
 }
 
 export interface AdminListItem extends AdminProfile {

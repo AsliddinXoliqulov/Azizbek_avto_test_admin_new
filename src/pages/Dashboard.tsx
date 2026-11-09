@@ -1,78 +1,71 @@
-import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PageHeader } from '../App'
-import { requireSupabase } from '../lib/supabase'
-import type { CoverageReport } from '../lib/types'
-import { getErrorMessage } from '../lib/types'
-import { Notice } from '../components/Notice'
-import logo from '../logo.jpg'
 
-const EMPTY_REPORT: CoverageReport = {
-  questions_total: 0,
-  questions_published: 0,
-  questions_draft: 0,
-  bilets_total: 0,
-  tricky_count: 0,
-  numeric_count: 0,
-  road_sign_count: 0,
-  reference_signs_total: 0,
-  reference_signs_missing: 0,
-  active_codes: 0,
-  pending_codes: 0,
-}
+const actions = [
+  {
+    to: '/chapters',
+    icon: (
+      <>
+        <path d="m2 9 10-5 10 5-10 5L2 9Z" />
+        <path d="M6 11v5c3.7 2.7 8.3 2.7 12 0v-5M22 9v5" />
+      </>
+    ),
+    tone: 'mint',
+    title: 'Darslar',
+  },
+  {
+    to: '/categories',
+    icon: (
+      <>
+        <path d="M5 3h14v18H5z" />
+        <path d="m8 12 2.5 2.5L16 9M8 7h8M8 18h5" />
+      </>
+    ),
+    tone: 'gold',
+    title: 'Mavzular',
+  },
+  {
+    to: '/questions',
+    icon: (
+      <>
+        <circle cx="5" cy="6" r="1.3" />
+        <circle cx="5" cy="12" r="1.3" />
+        <circle cx="5" cy="18" r="1.3" />
+        <path d="M10 6h10M10 12h10M10 18h10" />
+      </>
+    ),
+    tone: 'rose',
+    title: 'Savollar',
+  },
+  {
+    to: '/codes',
+    icon: (
+      <>
+        <circle cx="8" cy="8" r="4.5" />
+        <path d="m11.2 11.2 9.3 9.3M16 16l2-2m-5-1 2-2" />
+      </>
+    ),
+    tone: 'violet',
+    title: 'Aktivatsiya kodlari',
+  },
+]
 
 export default function Dashboard() {
-  const [report, setReport] = useState<CoverageReport>(EMPTY_REPORT)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const { data, error: rpcError } = await requireSupabase().rpc('coverage_report')
-      if (rpcError) throw rpcError
-      setReport({ ...EMPTY_REPORT, ...(data as Partial<CoverageReport>) })
-    } catch (reason) {
-      setError(getErrorMessage(reason))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { void load() }, [load])
-
   return (
-    <>
-      <PageHeader title="Umumiy ko‘rinish" description="AZIZBEK AVTO TEST tizimining bugungi holati." action={<button className="button button-quiet" onClick={() => void load()} disabled={loading}>↻ Yangilash</button>} />
-      {error && <Notice message={error} />}
-      <div className="welcome-strip">
-        <div className="welcome-copy"><span className="eyebrow">AZIZBEK AVTO TEST · ADMIN</span><h2>Haydovchilik bilimlari boshqaruvi</h2><p>Savollar va testlar bir joyda — boshqarish oson, foydalanish qulay.</p></div>
-        <img className="welcome-logo" src={logo} alt="Azizbek Avto Test" />
-      </div>
-      <section className="stat-grid">
-        <StatCard label="Jami savollar" value={report.questions_total} icon="▤" tone="blue" loading={loading} detail={`${report.questions_published} ta chop etilgan`} />
-        <StatCard label="Qoralamalar" value={report.questions_draft} icon="◷" tone="amber" loading={loading} detail="Tasdiqlash kutilmoqda" />
-        <StatCard label="Biletlar" value={report.bilets_total} icon="▦" tone="violet" loading={loading} detail="Faol imtihon biletlari" />
-        <StatCard label="Faol kodlar" value={report.active_codes} icon="⌁" tone="green" loading={loading} detail={`${report.pending_codes} ta kutilmoqda`} />
+    <main className="admin-home-stage" aria-label="Boshqaruv bo‘limlari">
+      <section className="admin-home-grid">
+        {actions.map((action) => (
+          <Link
+            className={`admin-home-tile ${action.tone}`}
+            key={action.to}
+            to={action.to}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              {action.icon}
+            </svg>
+            <strong>{action.title}</strong>
+          </Link>
+        ))}
       </section>
-      <div className="dashboard-grid dashboard-grid-single">
-        <section className="panel-card quick-actions">
-          <div className="card-heading"><div><h2>Tezkor amallar</h2><p>Ko‘p ishlatiladigan bo‘limlar</p></div></div>
-          <Link to="/questions" className="quick-action"><span className="quick-icon blue-bg">▤</span><span><strong>Savollarni boshqarish</strong><small>Savollar bazasini ko‘rish va tahrirlash</small></span><b>→</b></Link>
-          <Link to="/codes" className="quick-action"><span className="quick-icon green-bg">⌁</span><span><strong>Kod yaratish</strong><small>Qurilma uchun 1 soatlik kod</small></span><b>→</b></Link>
-        </section>
-      </div>
-    </>
-  )
-}
-
-function StatCard({ label, value, icon, tone, loading, detail }: { label: string; value: number; icon: string; tone: string; loading: boolean; detail: string }) {
-  return (
-    <article className="stat-card">
-      <div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div>
-      <strong className="stat-value">{loading ? '—' : value.toLocaleString()}</strong>
-      <span className="stat-detail">{detail}</span>
-    </article>
+    </main>
   )
 }

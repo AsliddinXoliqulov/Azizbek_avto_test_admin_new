@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { PageHeader } from '../App'
+import { useConfirm } from '../components/ConfirmProvider'
 import { Notice } from '../components/Notice'
 import { requireSupabase } from '../lib/supabase'
 import { getErrorMessage } from '../lib/types'
@@ -34,6 +35,8 @@ interface ImportProgress {
 }
 
 export default function BaseImport() {
+  const confirm = useConfirm()
+
   const [bankFile, setBankFile] = useState<File | null>(null)
   const [bank, setBank] = useState<QuestionBank | null>(null)
   const [imageFiles, setImageFiles] = useState<File[]>([])
@@ -119,9 +122,12 @@ export default function BaseImport() {
 
   async function uploadImages() {
     if (!bank || !canUpload) return
-    if (!window.confirm(
-      `${imageFiles.length} ta rasm Storage’ga yuklanadi. Ma’lumotlar bazasi oldindan SQL seed bilan to‘ldirilgan bo‘lishi kerak. Davom etasizmi?`,
-    )) return
+    const confirmed = await confirm({
+      title: 'Rasmlarni yuklash',
+      message: `${imageFiles.length} ta rasm Storage’ga yuklanadi. Ma’lumotlar bazasi oldindan SQL seed bilan to‘ldirilgan bo‘lishi kerak. Davom etasizmi?`,
+      confirmLabel: 'Yuklash',
+    })
+    if (!confirmed) return
 
     setBusy(true)
     setError('')

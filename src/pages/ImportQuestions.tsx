@@ -141,7 +141,7 @@ export default function ImportQuestions() {
           <div className="panel-card">
             <div className="card-heading"><div><h2>Import tartibi</h2><p>Bazaga xavfsiz qo‘shish</p></div></div>
             <ol className="steps-list"><li><span>1</span><div><strong>JSON tayyorlang</strong><small>correct_index 0 dan boshlanadi; lesson_id dars ID’si yoki null bo‘lsin.</small></div></li><li><span>2</span><div><strong>Tekshirib import qiling</strong><small>Savollarda kamida 2 ta javob varianti bo‘lsin, bir importda maksimal 250 savol kiritiladi.</small></div></li><li><span>3</span><div><strong>Tartiblanadi</strong><small>Darsga biriktirilgan savollar odatiy variantlarga, yangilar esa oxirgi variantlarga qo‘shiladi.</small></div></li></ol>
-            <Link to="/new-questions" className="text-link">Admin savollari ro‘yxatiga o‘tish →</Link>
+            <Link to="/questions?type=new" className="text-link">Savollar ro‘yxatiga o‘tish →</Link>
           </div>
           <div className="info-box import-warning"><strong>PDF va rasmlar</strong><br />Bu import JSON orqali ishlaydi, OCR qilmaydi. Matnni va rasm URL’larini oldindan tayyorlang; fayl rasmlarini Savol tahrirlash oynasidan storage’ga yuklash mumkin.</div>
         </aside>

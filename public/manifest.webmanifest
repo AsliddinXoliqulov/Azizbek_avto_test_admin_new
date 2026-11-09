@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "AZIZBEK PRAVA AKADEMIYASI · Admin",
+  "short_name": "Prava Admin",
+  "description": "AZIZBEK PRAVA AKADEMIYASI boshqaruv paneli",
+  "lang": "uz",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#131a26",
+  "theme_color": "#131a26",
+  "icons": [
+    {
+      "src": "/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

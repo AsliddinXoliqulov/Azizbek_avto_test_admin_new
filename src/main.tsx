@@ -2,12 +2,23 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import { ConfirmProvider } from './components/ConfirmProvider'
 import './styles.css'
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+      console.error('PWA service worker ro‘yxatdan o‘tmadi:', error)
+    })
+  })
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <ConfirmProvider>
+        <App />
+      </ConfirmProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

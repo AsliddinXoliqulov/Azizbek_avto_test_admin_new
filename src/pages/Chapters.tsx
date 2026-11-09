@@ -1,0 +1,1283 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { PageHeader } from '../App'
+import { useAdmin } from '../App'
+import { useConfirm } from '../components/ConfirmProvider'
+import { Modal } from '../components/Modal'
+import { Notice } from '../components/Notice'
+import { TranslateButton } from '../components/TranslateButton'
+import { requireSupabase } from '../lib/supabase'
+import {
+  getErrorMessage,
+  QUESTION_LOCALES,
+  QUESTION_LOCALE_LABELS,
+} from '../lib/types'
+import type {
+  BaseLesson,
+  BaseSection,
+  LocalizedText,
+  QuestionLocale,
+} from '../lib/types'
+
+function localizedValue(
+  value: Partial<LocalizedText> | null | undefined
+): LocalizedText {
+  return {
+    'uz-Latn': value?.['uz-Latn'] || '',
+    'uz-Cyrl': value?.['uz-Cyrl'] || '',
+    ru: value?.ru || '',
+  }
+}
+
+function sectionTitle(section: BaseSection, number: number): LocalizedText {
+  const title = localizedValue(section.name)
+  const hasAutomaticName =
+    /^\d+\s*[-–]\s*bo[’‘ʻ']?lim$/i.test(title['uz-Latn'].trim()) ||
+    /^\d+\s*[-–]\s*бўлим$/i.test(title['uz-Cyrl'].trim()) ||
+    /^раздел\s+\d+$/i.test(title.ru.trim())
+  return hasAutomaticName
+    ? {
+        'uz-Latn': `${number}-bo‘lim`,
+        'uz-Cyrl': `${number}-бўлим`,
+        ru: `Раздел ${number}`,
+      }
+    : title
+}
+
+interface BaseQuestionRow {
+  id: number
+  source: 'base' | 'admin_new'
+  lesson_id: number | null
+  text: Partial<LocalizedText>
+}
+
+interface PendingQuestionMove {
+  id: number
+  lesson_id: number | null
+  pending_lesson_id: number
+  pending_unassigned_at: string
+}
+
+const QUESTION_MOVE_WINDOW_MS = 10 * 60 * 1000
+
+const questionKey = (question: BaseQuestionRow) =>
+  `${question.source}:${question.id}`
+
+async function fetchPendingMoves(
+  request: (
+    from: number,
+    to: number
+  ) => PromiseLike<{
+    data: Record<string, unknown>[] | null
+    error: { message: string } | null
+  }>
+): Promise<PendingQuestionMove[]> {
+  const rows: PendingQuestionMove[] = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await request(offset, offset + 499)
+    if (error) throw error
+    for (const row of data || []) {
+      const id = Number(row.id)
+      const pendingLessonId = Number(row.pending_lesson_id)
+      if (
+        !Number.isSafeInteger(id) ||
+        !Number.isSafeInteger(pendingLessonId) ||
+        typeof row.pending_unassigned_at !== 'string'
+      ) {
+        throw new Error('Vaqtincha ajratilgan savol ma’lumotlari noto‘g‘ri.')
+      }
+      rows.push({
+        id,
+        lesson_id: row.lesson_id == null ? null : Number(row.lesson_id),
+        pending_lesson_id: pendingLessonId,
+        pending_unassigned_at: row.pending_unassigned_at,
+      })
+    }
+    if (!data || data.length < 500) return rows
+  }
+}
+
+export default function Chapters() {
+  const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { registerBackHandler } = useAdmin()
+
+  const [sections, setSections] = useState<BaseSection[]>([])
+  const [lessons, setLessons] = useState<BaseLesson[]>([])
+  const [questionCounts, setQuestionCounts] = useState<Record<number, number>>(
+    {}
+  )
+  const [lessonEditor, setLessonEditor] = useState<
+    { lesson: BaseLesson; sectionId: number } | undefined
+  >()
+  const [showLessonPicker, setShowLessonPicker] = useState(false)
+  const [selectedLessonIds, setSelectedLessonIds] = useState<Set<number>>(
+    () => new Set()
+  )
+  const [attachingLessons, setAttachingLessons] = useState(false)
+  const [lessonQuestions, setLessonQuestions] = useState<
+    BaseLesson | undefined
+  >()
+  const [showQuestionPicker, setShowQuestionPicker] = useState(false)
+  const [busyTopicId, setBusyTopicId] = useState<number | null>(null)
+  const [pendingMoveExpiry, setPendingMoveExpiry] = useState<number | null>(
+    null
+  )
+  const [assignmentRefreshKey, setAssignmentRefreshKey] = useState(0)
+  const pendingMoveTimer = useRef<number | null>(null)
+  const [activeSectionId, setActiveSectionId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const activeSection = sections.find(
+    (section) => section.id === activeSectionId
+  )
+  const sectionLessons = activeSection
+    ? lessons.filter(
+        (lesson) => lesson.section_id === activeSection.id && !lesson.is_deleted
+      ).sort(
+        (left, right) =>
+          left.sort_order - right.sort_order || left.id - right.id
+      )
+    : []
+
+  useEffect(() => {
+    registerBackHandler(() => {
+      if (showQuestionPicker) setShowQuestionPicker(false)
+      else if (lessonQuestions) setLessonQuestions(undefined)
+      else if (lessonEditor) setLessonEditor(undefined)
+      else if (activeSectionId !== null) setActiveSectionId(null)
+      else if (window.history.state?.idx > 0) navigate(-1)
+      else navigate('/')
+    })
+    return () => registerBackHandler(null)
+  }, [
+    activeSectionId,
+    lessonEditor,
+    lessonQuestions,
+    navigate,
+    registerBackHandler,
+    showQuestionPicker,
+  ])
+
+  const restoreExpiredQuestionMoves = useCallback(async () => {
+    const client = requireSupabase()
+    const [baseMoves, adminMoves] = await Promise.all([
+      fetchPendingMoves((from, to) =>
+        client
+          .from('base_questions')
+          .select('id,lesson_id,pending_lesson_id,pending_unassigned_at')
+          .not('pending_lesson_id', 'is', null)
+          .order('id')
+          .range(from, to)
+      ),
+      fetchPendingMoves((from, to) =>
+        client
+          .from('admin_new_questions')
+          .select('id,lesson_id,pending_lesson_id,pending_unassigned_at')
+          .not('pending_lesson_id', 'is', null)
+          .order('id')
+          .range(from, to)
+      ),
+    ])
+    const now = Date.now()
+    let nextExpiry = Number.POSITIVE_INFINITY
+    for (const [source, moves] of [
+      ['base', baseMoves],
+      ['admin_new', adminMoves],
+    ] as const) {
+      const table = source === 'base' ? 'base_questions' : 'admin_new_questions'
+      for (const move of moves) {
+        const expiresAt =
+          Date.parse(move.pending_unassigned_at) + QUESTION_MOVE_WINDOW_MS
+        if (!Number.isFinite(expiresAt))
+          throw new Error(
+            `Savol #${move.id} uchun ko‘chirish muddati noto‘g‘ri.`
+          )
+        if (expiresAt > now) {
+          nextExpiry = Math.min(nextExpiry, expiresAt)
+          continue
+        }
+        if (move.lesson_id !== null) {
+          const { error: clearError } = await client
+            .from(table)
+            .update({ pending_lesson_id: null, pending_unassigned_at: null })
+            .eq('id', move.id)
+            .eq('pending_lesson_id', move.pending_lesson_id)
+          if (clearError) throw clearError
+          continue
+        }
+        const { error: restoreError } = await client
+          .from(table)
+          .update({
+            lesson_id: move.pending_lesson_id,
+            pending_lesson_id: null,
+            pending_unassigned_at: null,
+          })
+          .eq('id', move.id)
+          .eq('pending_lesson_id', move.pending_lesson_id)
+          .is('lesson_id', null)
+        if (restoreError) throw restoreError
+      }
+    }
+    setPendingMoveExpiry(Number.isFinite(nextExpiry) ? nextExpiry : null)
+  }, [])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const client = requireSupabase()
+      const [sectionsResult, lessonsResult] = await Promise.all([
+        client
+          .from('base_sections')
+          .select('id,sort_order,name,is_deleted')
+          .eq('is_deleted', false)
+          .order('sort_order')
+          .order('id'),
+        client
+          .from('base_lessons')
+          .select('id,section_id,sort_order,title,is_deleted')
+          .order('section_id')
+          .order('sort_order')
+          .order('id'),
+      ])
+      if (sectionsResult.error) throw sectionsResult.error
+      if (lessonsResult.error) throw lessonsResult.error
+      const counts: Record<number, number> = {}
+      for (let offset = 0; ; offset += 500) {
+        const [baseResult, adminResult] = await Promise.all([
+          client
+            .from('base_questions')
+            .select('lesson_id,base_answers(is_correct)')
+            .eq('is_deleted', false)
+            .not('lesson_id', 'is', null)
+            .order('id')
+            .range(offset, offset + 499),
+          client
+            .from('admin_new_questions')
+            .select('lesson_id')
+            .eq('is_deleted', false)
+            .not('lesson_id', 'is', null)
+            .order('id')
+            .range(offset, offset + 499),
+        ])
+        if (baseResult.error) throw baseResult.error
+        if (adminResult.error) throw adminResult.error
+
+        for (const row of baseResult.data || []) {
+          const answers = row.base_answers || []
+          if (
+            answers.length < 2 ||
+            answers.filter((answer) => answer.is_correct).length !== 1
+          )
+            continue
+          counts[row.lesson_id] = (counts[row.lesson_id] || 0) + 1
+        }
+        for (const row of adminResult.data || []) {
+          counts[row.lesson_id] = (counts[row.lesson_id] || 0) + 1
+        }
+        if (
+          (baseResult.data || []).length < 500 &&
+          (adminResult.data || []).length < 500
+        )
+          break
+      }
+      setSections((sectionsResult.data || []) as BaseSection[])
+      setLessons((lessonsResult.data || []) as BaseLesson[])
+      setQuestionCounts(counts)
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void restoreExpiredQuestionMoves()
+      .then(() => load())
+      .catch((reason) => {
+        setError(getErrorMessage(reason))
+        setLoading(false)
+      })
+  }, [load, restoreExpiredQuestionMoves])
+
+  useEffect(() => {
+    const requestedLessonId = Number(searchParams.get('lessonId'))
+    if (!Number.isSafeInteger(requestedLessonId) || requestedLessonId <= 0)
+      return
+    const lesson = lessons.find((item) => item.id === requestedLessonId)
+    if (!lesson) return
+    setActiveSectionId(lesson.section_id)
+    setLessonQuestions(lesson)
+    setSearchParams({}, { replace: true })
+  }, [lessons, searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (pendingMoveTimer.current !== null)
+      window.clearTimeout(pendingMoveTimer.current)
+    if (pendingMoveExpiry === null) return
+    pendingMoveTimer.current = window.setTimeout(
+      () => {
+        void restoreExpiredQuestionMoves()
+          .then(() => {
+            setAssignmentRefreshKey((current) => current + 1)
+            void load()
+          })
+          .catch((reason) => {
+            setError(getErrorMessage(reason))
+            setPendingMoveExpiry(Date.now() + 60_000)
+          })
+      },
+      Math.max(0, pendingMoveExpiry - Date.now())
+    )
+    return () => {
+      if (pendingMoveTimer.current !== null)
+        window.clearTimeout(pendingMoveTimer.current)
+    }
+  }, [load, pendingMoveExpiry, restoreExpiredQuestionMoves])
+
+  async function addSection() {
+    try {
+      const maxSortOrder = sections.reduce(
+        (max, section) => Math.max(max, section.sort_order),
+        -1
+      )
+      const number = sections.length + 1
+      const { error: insertError } = await requireSupabase()
+        .from('base_sections')
+        .insert({
+          name: {
+            'uz-Latn': `${number}-bo‘lim`,
+            'uz-Cyrl': `${number}-бўлим`,
+            ru: `Раздел ${number}`,
+          },
+          sort_order: maxSortOrder + 1,
+          created_at: new Date().toISOString(),
+        })
+      if (insertError) throw insertError
+      await load()
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    }
+  }
+
+  async function assignLesson(lesson: BaseLesson, sectionId: number) {
+    const nextOrder =
+      lessons
+        .filter((item) => item.section_id === sectionId && !item.is_deleted)
+        .reduce((max, item) => Math.max(max, item.sort_order), 0) + 1
+    const { error: updateError } = await requireSupabase()
+      .from('base_lessons')
+      .update({
+        section_id: sectionId,
+        sort_order: nextOrder,
+        is_deleted: false,
+      })
+      .eq('id', lesson.id)
+    if (updateError) throw updateError
+    setLessons((current) =>
+      current.map((item) =>
+        item.id === lesson.id
+          ? {
+              ...item,
+              section_id: sectionId,
+              sort_order: nextOrder,
+              is_deleted: false,
+            }
+          : item
+      )
+    )
+  }
+
+  async function attachSelectedLessons(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!activeSection || selectedLessonIds.size === 0) return
+    setAttachingLessons(true)
+    setError('')
+    try {
+      const selectedLessons = lessons.filter((lesson) =>
+        selectedLessonIds.has(lesson.id)
+      )
+      let nextOrder =
+        lessons
+          .filter(
+            (lesson) =>
+              lesson.section_id === activeSection.id && !lesson.is_deleted
+          )
+          .reduce((max, lesson) => Math.max(max, lesson.sort_order), 0) + 1
+      const client = requireSupabase()
+      for (const lesson of selectedLessons) {
+        const { error: updateError } = await client
+          .from('base_lessons')
+          .update({
+            section_id: activeSection.id,
+            sort_order: nextOrder,
+            is_deleted: false,
+          })
+          .eq('id', lesson.id)
+        if (updateError) throw updateError
+        nextOrder += 1
+      }
+      setSelectedLessonIds(new Set())
+      setShowLessonPicker(false)
+      await load()
+    } catch (reason) {
+      await load()
+      setError(getErrorMessage(reason))
+    } finally {
+      setAttachingLessons(false)
+    }
+  }
+
+  async function toggleLessonAssignment(lesson: BaseLesson, checked: boolean) {
+    if (checked && !activeSection) return
+    setBusyTopicId(lesson.id)
+    setError('')
+    try {
+      if (checked) {
+        await assignLesson(lesson, activeSection!.id)
+      } else {
+        const { error: updateError } = await requireSupabase()
+          .from('base_lessons')
+          .update({ section_id: null })
+          .eq('id', lesson.id)
+        if (updateError) throw updateError
+        setLessons((current) =>
+          current.map((item) =>
+            item.id === lesson.id ? { ...item, section_id: null } : item
+          )
+        )
+      }
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusyTopicId(null)
+    }
+  }
+
+  async function moveLesson(lesson: BaseLesson, direction: 'up' | 'down') {
+    if (!activeSection || busyTopicId !== null) return
+    const orderedLessons = [...sectionLessons].sort(
+      (left, right) =>
+        left.sort_order - right.sort_order || left.id - right.id
+    )
+    const currentIndex = orderedLessons.findIndex(
+      (item) => item.id === lesson.id
+    )
+    const nextIndex = currentIndex + (direction === 'up' ? -1 : 1)
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= orderedLessons.length)
+      return
+
+    setBusyTopicId(lesson.id)
+    setError('')
+    try {
+      const { data, error: moveError } = await requireSupabase().rpc(
+        'admin_move_base_lesson',
+        { p_lesson_id: lesson.id, p_direction: direction }
+      )
+      if (moveError) throw moveError
+      if (!data) {
+        throw new Error('Mavzu tartibini o‘zgartirib bo‘lmadi. Sahifani yangilang.')
+      }
+
+      const reorderedLessons = [...orderedLessons]
+      ;[reorderedLessons[currentIndex], reorderedLessons[nextIndex]] = [
+        reorderedLessons[nextIndex],
+        reorderedLessons[currentIndex],
+      ]
+      const sortOrderById = new Map(
+        reorderedLessons.map((item, index) => [item.id, index + 1])
+      )
+      setLessons((current) =>
+        current.map((item) => {
+          const sortOrder = sortOrderById.get(item.id)
+          return sortOrder === undefined ? item : { ...item, sort_order: sortOrder }
+        })
+      )
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusyTopicId(null)
+    }
+  }
+
+  async function removeSection(section: BaseSection) {
+    const confirmed = await confirm({
+      title: 'Bo‘limni o‘chirish',
+      message:
+        'Bo‘limni o‘chirib, darslarini ham o‘chirish va ularga biriktirilgan savollarni ajrataymi? Savollar bazadan o‘chirilmaydi.',
+      confirmLabel: 'O‘chirish',
+      danger: true,
+    })
+    if (!confirmed) return
+    try {
+      const client = requireSupabase()
+      const sectionLessons = lessons.filter(
+        (lesson) => lesson.section_id === section.id
+      )
+      const lessonIds = sectionLessons.map((lesson) => lesson.id)
+      if (lessonIds.length) {
+        const detachResult = await client
+          .from('base_questions')
+          .update({
+            lesson_id: null,
+            pending_lesson_id: null,
+            pending_unassigned_at: null,
+          })
+          .in('lesson_id', lessonIds)
+        if (detachResult.error) throw detachResult.error
+        const detachAdminResult = await client
+          .from('admin_new_questions')
+          .update({
+            lesson_id: null,
+            pending_lesson_id: null,
+            pending_unassigned_at: null,
+          })
+          .in('lesson_id', lessonIds)
+        if (detachAdminResult.error) throw detachAdminResult.error
+        const lessonResult = await client
+          .from('base_lessons')
+          .update({ is_deleted: true })
+          .in('id', lessonIds)
+        if (lessonResult.error) throw lessonResult.error
+      }
+      const sectionResult = await client
+        .from('base_sections')
+        .update({ is_deleted: true })
+        .eq('id', section.id)
+      if (sectionResult.error) throw sectionResult.error
+      if (activeSectionId === section.id) setActiveSectionId(null)
+      await load()
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        title={
+          lessonQuestions ? 'Savollar' : activeSection ? 'Mavzular' : 'Darslar'
+        }
+        description={
+          lessonQuestions
+            ? `${lessonQuestions.title['uz-Latn'] || lessonQuestions.title.ru || 'Mavzu'} mavzusidagi savollarni ko‘ring va boshqaring.`
+            : activeSection
+              ? 'Mavzularni ko‘ring va boshqaring.'
+              : 'Ilovadagi bo‘limlar, mavzular va savol biriktirishni boshqaring.'
+        }
+        action={
+          lessonQuestions ? (
+            <button
+              className="button button-primary"
+              onClick={() => setShowQuestionPicker(true)}
+            >
+              ＋ Savol biriktirish
+            </button>
+          ) : activeSection ? (
+            <div className="page-action-group">
+              <button
+                className="button button-primary"
+                onClick={() => {
+                  setSelectedLessonIds(new Set())
+                  setShowLessonPicker(true)
+                }}
+              >
+                ＋ Mavzularni biriktirish
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
+      {error && <Notice message={error} onClose={() => setError('')} />}
+      {lessonQuestions ? (
+        <LessonQuestionsEditor
+          key={`${lessonQuestions.id}:${assignmentRefreshKey}`}
+          lesson={lessonQuestions}
+          showPicker={showQuestionPicker}
+          onClosePicker={() => setShowQuestionPicker(false)}
+          onSaved={() => {
+            void restoreExpiredQuestionMoves()
+              .then(() => load())
+              .catch((reason) => setError(getErrorMessage(reason)))
+          }}
+          onViewQuestion={(question) => {
+            const focus = `${question.source}:${question.id}`
+            navigate(
+              `/questions?search=${encodeURIComponent(question.text?.['uz-Latn'] || question.text?.ru || '')}&focus=${encodeURIComponent(focus)}`
+            )
+          }}
+        />
+      ) : loading ? (
+        <section className="panel-card table-panel">
+          <div className="table-state">Bo‘limlar yuklanmoqda…</div>
+        </section>
+      ) : activeSection ? (
+        <section className="panel-card chapter-card topic-panel">
+          <div className="chapter-lessons">
+            {sectionLessons.length === 0 ? (
+              <div className="chapter-empty">
+                Bu bo‘limda mavzu yo‘q. “Mavzularni biriktirish” tugmasi orqali
+                mavjud mavzularni tanlang.
+              </div>
+            ) : (
+              sectionLessons.map((lesson, index) => (
+                <article className="lesson-row" key={lesson.id}>
+                  <span className="lesson-order">{index + 1}</span>
+                  <button
+                    type="button"
+                    className="lesson-copy lesson-open-questions"
+                    onClick={() => setLessonQuestions(lesson)}
+                    aria-label={`${lesson.title['uz-Latn'] || 'Mavzu'} savollarini biriktirish`}
+                  >
+                    <strong>
+                      {lesson.title['uz-Latn'] ||
+                        lesson.title.ru ||
+                        'Nomsiz mavzu'}
+                    </strong>
+                    <small>{questionCounts[lesson.id] || 0} ta savol</small>
+                  </button>
+                  <div className="row-actions">
+                    <button
+                      className="icon-button topic-order-button"
+                      type="button"
+                      title="Mavzuni yuqoriga ko‘tarish"
+                      aria-label={`${lesson.title['uz-Latn'] || 'Mavzu'}ni yuqoriga ko‘tarish`}
+                      disabled={busyTopicId !== null || index === 0}
+                      onClick={() => void moveLesson(lesson, 'up')}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      className="icon-button topic-order-button"
+                      type="button"
+                      title="Mavzuni pastga tushirish"
+                      aria-label={`${lesson.title['uz-Latn'] || 'Mavzu'}ni pastga tushirish`}
+                      disabled={
+                        busyTopicId !== null || index === sectionLessons.length - 1
+                      }
+                      onClick={() => void moveLesson(lesson, 'down')}
+                    >
+                      ↓
+                    </button>
+                    <input
+                      className="topic-assignment-checkbox"
+                      type="checkbox"
+                      checked
+                      disabled={busyTopicId !== null}
+                      aria-label={`${lesson.title['uz-Latn'] || 'Mavzu'}ni bo‘limdan ajratish`}
+                      onChange={() => toggleLessonAssignment(lesson, false)}
+                    />
+                    <button
+                      className="icon-button"
+                      title="Mavzuni tahrirlash"
+                      onClick={() =>
+                        setLessonEditor({
+                          lesson,
+                          sectionId: activeSection.id,
+                        })
+                      }
+                    >
+                      ✎
+                    </button>
+                    <button
+                      className="icon-button"
+                      title="Savollar bo‘limida ko‘rish"
+                      aria-label={`${lesson.title['uz-Latn'] || 'Mavzu'} savollar bo‘limida ko‘rish`}
+                      onClick={() => navigate(`/questions?lesson=${lesson.id}`)}
+                    >
+                      👁
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ) : (
+        <div className="chapter-grid">
+          {sections.map((section, sectionIndex) => {
+            const sectionLessons = lessons.filter(
+              (lesson) => lesson.section_id === section.id && !lesson.is_deleted
+            )
+            const sectionQuestionCount = sectionLessons.reduce(
+              (total, lesson) => total + (questionCounts[lesson.id] || 0),
+              0
+            )
+            const title = sectionTitle(section, sectionIndex + 1)
+            return (
+              <section
+                className="panel-card chapter-card chapter-overview-card"
+                key={section.id}
+              >
+                <button
+                  type="button"
+                  className="chapter-open"
+                  onClick={() => setActiveSectionId(section.id)}
+                  aria-label={`${section.name['uz-Latn'] || 'Bo‘lim'} mavzularini ochish`}
+                >
+                  <span className="chapter-title-group">
+                    <span className="chapter-open-copy">
+                      <strong>
+                        {title['uz-Latn'] || title.ru || 'Nomsiz bo‘lim'}
+                      </strong>
+                      <small>
+                        {sectionLessons.length} ta dars · {sectionQuestionCount}{' '}
+                        ta savol
+                      </small>
+                    </span>
+                  </span>
+                </button>
+                <div className="chapter-overview-actions">
+                  <button
+                    className="icon-button danger-icon"
+                    title="Bo‘limni o‘chirish"
+                    onClick={() => void removeSection(section)}
+                  >
+                    🗑
+                  </button>
+                </div>
+              </section>
+            )
+          })}
+          <button
+            type="button"
+            className="chapter-add-card"
+            onClick={() => void addSection()}
+          >
+            <span>＋</span>
+            <span className="chapter-add-copy">
+              <strong>Bo‘lim qo‘shish</strong>
+              <small>Keyingi bo‘limni yaratish</small>
+            </span>
+          </button>
+        </div>
+      )}
+      {showLessonPicker && activeSection && (
+        <Modal
+          title="Mavzularni bo‘limga biriktirish"
+          onClose={() => setShowLessonPicker(false)}
+          onSubmit={attachSelectedLessons}
+          busy={attachingLessons}
+          submitDisabled={selectedLessonIds.size === 0}
+          submitLabel="Tanlanganlarni biriktirish"
+        >
+          {lessons.filter(
+            (lesson) =>
+              lesson.section_id !== activeSection.id || lesson.is_deleted
+          ).length === 0 ? (
+            <p className="muted">Biriktirish uchun boshqa mavjud mavzu yo‘q.</p>
+          ) : (
+            <div className="lesson-attach-list">
+              {lessons
+                .filter(
+                  (lesson) =>
+                    lesson.section_id !== activeSection.id || lesson.is_deleted
+                )
+                .map((lesson) => {
+                  const previousSection = sections.find(
+                    (section) => section.id === lesson.section_id
+                  )
+                  const previousSectionNumber = previousSection
+                    ? sections.findIndex(
+                        (section) => section.id === previousSection.id
+                      ) + 1
+                    : 0
+                  const previousSectionTitle = previousSection
+                    ? sectionTitle(previousSection, previousSectionNumber)[
+                        'uz-Latn'
+                      ]
+                    : 'Biriktirilmagan'
+                  return (
+                    <label className="lesson-attach-option" key={lesson.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedLessonIds.has(lesson.id)}
+                        onChange={(event) =>
+                          setSelectedLessonIds((current) => {
+                            const next = new Set(current)
+                            if (event.target.checked) next.add(lesson.id)
+                            else next.delete(lesson.id)
+                            return next
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>
+                          {lesson.title['uz-Latn'] ||
+                            lesson.title.ru ||
+                            'Nomsiz mavzu'}
+                        </strong>
+                        <small>Hozirgi bo‘limi: {previousSectionTitle}</small>
+                      </span>
+                    </label>
+                  )
+                })}
+            </div>
+          )}
+          {selectedLessonIds.size === 0 &&
+            lessons.some(
+              (lesson) =>
+                lesson.section_id !== activeSection.id || lesson.is_deleted
+            ) && (
+              <p className="lesson-attach-hint">
+                Bo‘limga biriktirish uchun kamida bitta mavzuni tanlang.
+              </p>
+            )}
+        </Modal>
+      )}
+      {lessonEditor && (
+        <LocalizedEditor
+          title="Mavzuni tahrirlash"
+          initialTitle={localizedValue(lessonEditor.lesson.title)}
+          initialOrder={lessonEditor.lesson.sort_order}
+          nameLabel="Mavzu nomi"
+          onClose={() => setLessonEditor(undefined)}
+          onSave={async (title, sortOrder) => {
+            const payload = {
+              title,
+              sort_order: sortOrder,
+              section_id: lessonEditor.sectionId,
+            }
+            const result = await requireSupabase()
+              .from('base_lessons')
+              .update(payload)
+              .eq('id', lessonEditor.lesson.id)
+            if (result.error) throw result.error
+            setLessonEditor(undefined)
+            await load()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function LocalizedEditor({
+  title,
+  initialTitle,
+  initialOrder,
+  nameLabel,
+  onClose,
+  onSave,
+}: {
+  title: string
+  initialTitle: LocalizedText
+  initialOrder: number
+  nameLabel: string
+  onClose: () => void
+  onSave: (name: LocalizedText, order: number) => Promise<void>
+}) {
+  const [name, setName] = useState(initialTitle)
+  const [sortOrder, setSortOrder] = useState(String(initialOrder))
+  const [locale, setLocale] = useState<QuestionLocale>('uz-Latn')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (QUESTION_LOCALES.some((key) => !name[key].trim())) {
+      setError('Nomni uchala tilda ham kiriting.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await onSave(name, Number(sortOrder) || 0)
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      onSubmit={submit}
+      busy={busy}
+      submitLabel="Saqlash"
+    >
+      {error && <Notice message={error} />}
+      <div className="language-tabs" role="tablist" aria-label="Til">
+        {QUESTION_LOCALES.map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={locale === key}
+            className={locale === key ? 'selected' : ''}
+            onClick={() => setLocale(key)}
+          >
+            {QUESTION_LOCALE_LABELS[key]}
+          </button>
+        ))}
+      </div>
+      <label className="field">
+        <span>
+          {nameLabel} · {QUESTION_LOCALE_LABELS[locale]}
+        </span>
+        <input
+          value={name[locale]}
+          onChange={(event) =>
+            setName({ ...name, [locale]: event.target.value })
+          }
+          required
+        />
+      </label>
+      <TranslateButton
+        sourceText={name['uz-Latn']}
+        onTranslated={(translations) =>
+          setName((current) => ({ ...current, ...translations }))
+        }
+      />
+      <label className="field">
+        <span>Saralash tartibi</span>
+        <input
+          type="number"
+          min="0"
+          value={sortOrder}
+          onChange={(event) => setSortOrder(event.target.value)}
+        />
+      </label>
+    </Modal>
+  )
+}
+
+async function fetchQuestions(
+  request: (
+    from: number,
+    to: number
+  ) => PromiseLike<{
+    data: Record<string, unknown>[] | null
+    error: { message: string } | null
+  }>,
+  source: BaseQuestionRow['source']
+): Promise<BaseQuestionRow[]> {
+  const rows: BaseQuestionRow[] = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await request(offset, offset + 499)
+    if (error) throw error
+    rows.push(
+      ...(data || []).map((row) => {
+        const localized = source === 'admin_new' ? row.text_i18n : row.text
+        return {
+          id: Number(row.id),
+          source,
+          lesson_id: row.lesson_id === null ? null : Number(row.lesson_id),
+          text: (localized as Partial<LocalizedText>) || {
+            'uz-Latn': String(row.text || ''),
+          },
+        }
+      })
+    )
+    if (!data || data.length < 500) return rows
+  }
+}
+
+function LessonQuestionsEditor({
+  lesson,
+  showPicker,
+  onClosePicker,
+  onSaved,
+  onViewQuestion,
+}: {
+  lesson: BaseLesson
+  showPicker: boolean
+  onClosePicker: () => void
+  onSaved: () => void
+  onViewQuestion: (question: BaseQuestionRow) => void
+}) {
+  const [questions, setQuestions] = useState<BaseQuestionRow[]>([])
+  const [selected, setSelected] = useState<string[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      try {
+        const client = requireSupabase()
+        const [baseRows, adminRows] = await Promise.all([
+          fetchQuestions(
+            (from, to) =>
+              client
+                .from('base_questions')
+                .select('id,lesson_id,text')
+                .eq('is_deleted', false)
+                .order('id')
+                .range(from, to),
+            'base'
+          ),
+          fetchQuestions(
+            (from, to) =>
+              client
+                .from('admin_new_questions')
+                .select('id,lesson_id,text,text_i18n')
+                .eq('is_deleted', false)
+                .order('id')
+                .range(from, to),
+            'admin_new'
+          ),
+        ])
+        const rows = [...baseRows, ...adminRows]
+        if (active) {
+          setQuestions(rows)
+        }
+      } catch (reason) {
+        if (active) setError(getErrorMessage(reason))
+      } finally {
+        if (active) setLoading(false)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [lesson.id])
+
+  useEffect(() => {
+    if (showPicker) setSelected([])
+  }, [showPicker])
+
+  const visible = useMemo(() => {
+    const search = query.trim().toLocaleLowerCase()
+    return questions
+      .filter((question) => question.lesson_id === null)
+      .filter(
+        (question) =>
+          !search ||
+          Object.values(question.text || {}).some((text) =>
+            String(text).toLocaleLowerCase().includes(search)
+          )
+      )
+      .sort((left, right) => left.id - right.id)
+  }, [questions, query])
+
+  const assignedQuestions = questions.filter(
+    (question) => question.lesson_id === lesson.id
+  )
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const client = requireSupabase()
+      const add = questions.filter(
+        (question) =>
+          selected.includes(questionKey(question)) &&
+          question.lesson_id === null
+      )
+      for (const source of ['base', 'admin_new'] as const) {
+        const idsToAdd = add
+          .filter((question) => question.source === source)
+          .map((question) => question.id)
+        const table =
+          source === 'base' ? 'base_questions' : 'admin_new_questions'
+        if (idsToAdd.length) {
+          const { error: addError } = await client
+            .from(table)
+            .update({
+              lesson_id: lesson.id,
+              pending_lesson_id: null,
+              pending_unassigned_at: null,
+            })
+            .in('id', idsToAdd)
+          if (addError) throw addError
+        }
+      }
+      const addedKeys = new Set(add.map(questionKey))
+      setQuestions((current) =>
+        current.map((question) =>
+          addedKeys.has(questionKey(question))
+            ? { ...question, lesson_id: lesson.id }
+            : question
+        )
+      )
+      setSelected([])
+      onClosePicker()
+      onSaved()
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function unassign(question: BaseQuestionRow) {
+    setBusy(true)
+    setError('')
+    try {
+      const table =
+        question.source === 'base' ? 'base_questions' : 'admin_new_questions'
+      const { error: updateError } = await requireSupabase()
+        .from(table)
+        .update({
+          lesson_id: null,
+          pending_lesson_id: lesson.id,
+          pending_unassigned_at: new Date().toISOString(),
+        })
+        .eq('id', question.id)
+      if (updateError) throw updateError
+      setQuestions((current) =>
+        current.map((item) =>
+          questionKey(item) === questionKey(question)
+            ? { ...item, lesson_id: null }
+            : item
+        )
+      )
+      onSaved()
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      {error && <Notice message={error} />}
+      <section className="panel-card lesson-question-page">
+        {loading ? (
+          <div className="table-state">Savollar yuklanmoqda…</div>
+        ) : assignedQuestions.length === 0 ? (
+          <div className="chapter-empty">
+            Bu mavzuga hali savol biriktirilmagan. Yuqoridagi tugma orqali savol
+            tanlang.
+          </div>
+        ) : (
+          <div className="lesson-question-list">
+            {assignedQuestions.map((question, index) => (
+              <div
+                className="lesson-question-option"
+                key={questionKey(question)}
+              >
+                <span className="lesson-order">{index + 1}</span>
+                <span className="lesson-question-assigned-copy">
+                  <strong>
+                    {question.text?.['uz-Latn'] ||
+                      question.text?.ru ||
+                      `Savol #${question.id}`}
+                  </strong>
+                  <small>
+                    {question.source === 'base'
+                      ? 'Asosiy baza'
+                      : 'Admin savoli'}{' '}
+                    · #{question.id}
+                  </small>
+                </span>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="icon-button lesson-question-view"
+                    title="Savolni savollar bo‘limida ko‘rish"
+                    aria-label="Savolni ko‘rish"
+                    onClick={() => onViewQuestion(question)}
+                  >
+                    👁
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button danger-icon"
+                    title="Savolni mavzudan ajratish"
+                    aria-label="Savolni mavzudan ajratish"
+                    disabled={busy}
+                    onClick={() => void unassign(question)}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      {showPicker && (
+        <Modal
+          title="Savol biriktirish"
+          onClose={onClosePicker}
+          onSubmit={save}
+          busy={busy}
+          submitDisabled={loading || selected.length === 0}
+          submitLabel="Tanlanganlarni biriktirish"
+        >
+          {error && <Notice message={error} />}
+          <label className="search-field lesson-question-search">
+            <span>⌕</span>
+            <input
+              placeholder="Savollarni qidirish…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          {loading ? (
+            <div className="table-state">Savollar yuklanmoqda…</div>
+          ) : (
+            <div className="lesson-question-list">
+              {visible.map((question) => (
+                <div
+                  className="lesson-question-option"
+                  key={questionKey(question)}
+                >
+                  <label className="lesson-question-select">
+                    <span>
+                      <strong>
+                        {question.text?.['uz-Latn'] ||
+                          question.text?.ru ||
+                          `Savol #${question.id}`}
+                      </strong>
+                      <small>
+                        {question.source === 'base'
+                          ? 'Asosiy baza'
+                          : 'Admin savoli'}{' '}
+                        · #{question.id} · biriktirilmagan
+                      </small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(questionKey(question))}
+                      onChange={(event) =>
+                        setSelected((current) =>
+                          event.target.checked
+                            ? [...current, questionKey(question)]
+                            : current.filter(
+                                (key) => key !== questionKey(question)
+                              )
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="icon-button lesson-question-view"
+                    title="Savolni savollar bo‘limida ko‘rish"
+                    aria-label="Savolni ko‘rish"
+                    onClick={() => onViewQuestion(question)}
+                  >
+                    👁
+                  </button>
+                </div>
+              ))}
+              {visible.length === 0 && (
+                <div className="table-state">
+                  {questions.some((question) => question.lesson_id === null)
+                    ? 'Mos savol topilmadi.'
+                    : 'Biriktirilmagan savol topilmadi.'}
+                </div>
+              )}
+            </div>
+          )}
+          <p className="field-hint">
+            Bu ro‘yxatda faqat hech qaysi mavzuga biriktirilmagan savollar
+            ko‘rsatiladi.
+          </p>
+        </Modal>
+      )}
+    </>
+  )
+}

@@ -7,9 +7,10 @@ interface ModalProps {
   children: ReactNode
   submitLabel?: string
   busy?: boolean
+  submitDisabled?: boolean
 }
 
-export function Modal({ title, onClose, onSubmit, children, submitLabel = 'Saqlash', busy = false }: ModalProps) {
+export function Modal({ title, onClose, onSubmit, children, submitLabel = 'Saqlash', busy = false, submitDisabled = false }: ModalProps) {
   const content = (
     <>
       <div className="modal-header">
@@ -20,7 +21,7 @@ export function Modal({ title, onClose, onSubmit, children, submitLabel = 'Saqla
       {onSubmit && (
         <div className="modal-footer">
           <button className="button button-quiet" type="button" onClick={onClose}>Bekor qilish</button>
-          <button className="button button-primary" type="submit" disabled={busy}>
+          <button className="button button-primary" type="submit" disabled={busy || submitDisabled}>
             {busy ? 'Saqlanmoqda…' : submitLabel}
           </button>
         </div>
