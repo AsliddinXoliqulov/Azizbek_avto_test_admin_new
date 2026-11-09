@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useSiteLanguage } from '../lib/siteLanguage'
 
 interface ConfirmOptions {
   title: string
@@ -20,6 +21,7 @@ export function useConfirm() {
 }
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const { t } = useSiteLanguage()
   const [dialog, setDialog] = useState<ConfirmOptions | null>(null)
   const resolveRef = useRef<((confirmed: boolean) => void) | null>(null)
 
@@ -62,12 +64,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               {dialog.danger ? '!' : '?'}
             </div>
             <div className="confirm-copy">
-              <h2 id="confirm-title">{dialog.title}</h2>
-              <p id="confirm-message">{dialog.message}</p>
+              <h2 id="confirm-title">{t(dialog.title)}</h2>
+              <p id="confirm-message">{t(dialog.message)}</p>
             </div>
             <div className="confirm-actions">
               <button className="button button-quiet" type="button" onClick={() => finish(false)}>
-                {dialog.cancelLabel || 'Bekor qilish'}
+                {t(dialog.cancelLabel || 'Bekor qilish')}
               </button>
               <button
                 autoFocus
@@ -75,7 +77,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 type="button"
                 onClick={() => finish(true)}
               >
-                {dialog.confirmLabel || 'Tasdiqlash'}
+                {t(dialog.confirmLabel || 'Tasdiqlash')}
               </button>
             </div>
           </section>

@@ -8,7 +8,9 @@ import { Notice } from '../components/Notice'
 import { ImageListEditor } from '../components/ImageListEditor'
 import { TranslateButton } from '../components/TranslateButton'
 import { fetchAutoVariantCatalog } from '../lib/autoVariants'
+import { useSiteLanguage } from '../lib/siteLanguage'
 import { requireSupabase } from '../lib/supabase'
+import { normalizeSearchText } from '../lib/search'
 import {
   getErrorMessage,
   QUESTION_LOCALES,
@@ -63,6 +65,20 @@ export interface LessonOption {
   label: string
 }
 
+function localizedText(
+  value: Partial<LocalizedText> | null | undefined,
+  language: QuestionLocale,
+  fallback = ''
+) {
+  return (
+    value?.[language] ||
+    value?.['uz-Latn'] ||
+    value?.ru ||
+    value?.['uz-Cyrl'] ||
+    fallback
+  )
+}
+
 interface Draft {
   lesson_id: number | null
   is_new: boolean
@@ -83,8 +99,11 @@ const emptyDraft = (): Draft => ({
   is_numeric: false,
   is_similar: false,
   text: { 'uz-Latn': '', 'uz-Cyrl': '', ru: '' },
-  options: [''],
-  options_i18n: [{ 'uz-Latn': '', 'uz-Cyrl': '', ru: '' }],
+  options: ['', ''],
+  options_i18n: [
+    { 'uz-Latn': '', 'uz-Cyrl': '', ru: '' },
+    { 'uz-Latn': '', 'uz-Cyrl': '', ru: '' },
+  ],
   correct_index: 0,
   image_urls: [],
   explanation: { 'uz-Latn': '', 'uz-Cyrl': '', ru: '' },
@@ -92,6 +111,7 @@ const emptyDraft = (): Draft => ({
 })
 
 export default function AdminNewQuestions() {
+  const { t, language } = useSiteLanguage()
   const confirm = useConfirm()
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -158,7 +178,7 @@ export default function AdminNewQuestions() {
       const sectionNames = new Map(
         (sectionsResult.data || []).map((section) => [
           section.id,
-          section.name?.['uz-Latn'] || section.name?.ru || 'Bo‘lim',
+          localizedText(section.name, language, t('Bo‘lim')),
         ])
       )
       const catalogRowsByKey = new Map(
@@ -198,7 +218,7 @@ export default function AdminNewQuestions() {
             is_new: Boolean(question.is_new),
             is_numeric: Boolean(question.is_numeric),
             is_similar: Boolean(question.is_similar),
-            text: text?.['uz-Latn'] || text?.ru || `Savol #${id}`,
+            text: localizedText(text, language, `${t('Savol')} #${id}`),
             text_i18n: text,
             options: Array.from(
               { length: catalogQuestion?.option_count || 0 },
@@ -215,7 +235,7 @@ export default function AdminNewQuestions() {
         (a, b) =>
           a.created_at.localeCompare(b.created_at) || a.key.localeCompare(b.key)
       )
-      const search = query.trim().toLocaleLowerCase()
+      const search = normalizeSearchText(query)
       const filteredRows = ticketFilter
         ? allNewRows.filter(
             (question) => question.ticket_number === Number(ticketFilter)
@@ -224,12 +244,12 @@ export default function AdminNewQuestions() {
       const searchedRows = search
         ? filteredRows.filter(
             (question) =>
-              question.text.toLocaleLowerCase().includes(search) ||
+              normalizeSearchText(question.text).includes(search) ||
               Object.values(question.text_i18n || {}).some((text) =>
-                text?.toLocaleLowerCase().includes(search)
+                normalizeSearchText(text || '').includes(search)
               ) ||
               question.options.some((option) =>
-                option.toLocaleLowerCase().includes(search)
+                normalizeSearchText(option).includes(search)
               )
           )
         : filteredRows
@@ -245,7 +265,7 @@ export default function AdminNewQuestions() {
       setLessonOptions(
         (lessonsResult.data || []).map((lesson) => ({
           id: lesson.id,
-          label: `${lesson.section_id == null ? 'Biriktirilmagan' : sectionNames.get(lesson.section_id) || 'Bo‘lim'} · ${lesson.title?.['uz-Latn'] || lesson.title?.ru || `Dars ${lesson.id}`}`,
+          label: `${lesson.section_id == null ? t('Biriktirilmagan') : sectionNames.get(lesson.section_id) || t('Bo‘lim')} · ${localizedText(lesson.title, language, `${t('Dars')} ${lesson.id}`)}`,
         }))
       )
     } catch (reason) {
@@ -253,7 +273,7 @@ export default function AdminNewQuestions() {
     } finally {
       setLoading(false)
     }
-  }, [page, query, ticketFilter])
+  }, [page, query, ticketFilter, language, t])
 
   useEffect(() => {
     void load()
@@ -270,7 +290,7 @@ export default function AdminNewQuestions() {
           .eq('id', editId)
           .maybeSingle()
         if (fetchError) throw fetchError
-        if (!data) throw new Error('Tahrirlash uchun savol topilmadi.')
+        if (!data) throw new Error(t('Tahrirlash uchun savol topilmadi.'))
         setEditing(data as AdminNewQuestion)
         const nextParams = new URLSearchParams(searchParams)
         nextParams.delete('edit')
@@ -279,14 +299,14 @@ export default function AdminNewQuestions() {
         setError(getErrorMessage(reason))
       }
     })()
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, t])
 
   async function remove(question: AdminNewQuestion) {
     const confirmed = await confirm({
-      title: 'Savolni o‘chirish',
+      title: t('Savolni o‘chirish'),
       message:
-        'Admin savolini o‘chirasizmi? O‘zgarish desktop ilovalarga sync qilinadi.',
-      confirmLabel: 'O‘chirish',
+        t('Admin savolini o‘chirasizmi? O‘zgarish desktop ilovalarga sync qilinadi.'),
+      confirmLabel: t('O‘chirish'),
       danger: true,
     })
     if (!confirmed) return
@@ -312,7 +332,7 @@ export default function AdminNewQuestions() {
             className="button button-primary"
             onClick={() => setEditing(null)}
           >
-            ＋ Savol qo‘shish
+            ＋ {t('Savol qo‘shish')}
           </button>
         }
       />
@@ -320,16 +340,18 @@ export default function AdminNewQuestions() {
       <section className="panel-card table-panel">
         <div className="section-intro">
           <div>
-            <h2>Yangi deb belgilangan savollar</h2>
-            <p>Dars tanlovi savolning tasnifini o‘zgartirmaydi.</p>
+            <h2>{t('Yangi deb belgilangan savollar')}</h2>
+            <p>{t('Dars tanlovi savolning tasnifini o‘zgartirmaydi.')}</p>
           </div>
-          <span className="count-pill">{count} ta yangi savol</span>
+          <span className="count-pill">
+            {count} {t('ta yangi savol')}
+          </span>
         </div>
         <div className="filter-bar">
           <label className="search-field">
             <span>⌕</span>
             <input
-              placeholder="Savol yoki javob variantidan qidirish…"
+              placeholder={t('Savol yoki javob variantidan qidirish…')}
               value={query}
               onChange={(event) => {
                 setPage(0)
@@ -345,10 +367,10 @@ export default function AdminNewQuestions() {
               setTicketFilter(event.target.value)
             }}
           >
-            <option value="">Barcha variantlar</option>
+            <option value="">{t('Barcha variantlar')}</option>
             {ticketNumbers.map((number) => (
               <option key={number} value={number}>
-                {number}-variant
+                {number}{t('-variant')}
               </option>
             ))}
           </select>
@@ -357,25 +379,25 @@ export default function AdminNewQuestions() {
           <table>
             <thead>
               <tr>
-                <th>SAVOL</th>
-                <th>VARIANT</th>
-                <th>HOLATI</th>
-                <th className="align-right">AMALLAR</th>
+                <th>{t('SAVOL')}</th>
+                <th>{t('VARIANT')}</th>
+                <th>{t('HOLATI')}</th>
+                <th className="align-right">{t('AMALLAR')}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
                   <td className="table-state" colSpan={4}>
-                    Savollar yuklanmoqda…
+                    {t('Savollar yuklanmoqda…')}
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
                   <td className="table-state" colSpan={4}>
                     {query || ticketFilter
-                      ? 'Bu filtr bo‘yicha yangi savol topilmadi.'
-                      : 'Yangi deb belgilangan savollar hali yo‘q.'}
+                      ? t('Bu filtr bo‘yicha yangi savol topilmadi.')
+                      : t('Yangi deb belgilangan savollar hali yo‘q.')}
                   </td>
                 </tr>
               ) : (
@@ -393,15 +415,20 @@ export default function AdminNewQuestions() {
                           </span>
                           <span className="truncate">
                             <strong>
-                              {question.text_i18n?.['uz-Latn'] || question.text}
+                              {localizedText(
+                                question.text_i18n,
+                                language,
+                                question.text
+                              )}
                             </strong>
                             <small>
-                              {question.options.length} ta javob varianti
+                              {question.options.length}{' '}
+                              {t('ta javob varianti')}
                               {question.source === 'base'
-                                ? ' · Asosiy baza'
+                                ? ` · ${t('Asosiy baza')}`
                                 : ''}
-                              {question.is_numeric ? ' · Raqamli' : ''}
-                              {question.is_similar ? ' · O‘xshash' : ''}
+                              {question.is_numeric ? ` · ${t('Raqamli')}` : ''}
+                              {question.is_similar ? ` · ${t('O‘xshash')}` : ''}
                             </small>
                           </span>
                         </div>
@@ -409,14 +436,14 @@ export default function AdminNewQuestions() {
                       <td>
                         <span className="cell-primary">
                           {question.ticket_number
-                            ? `${question.ticket_number}-variant · ${question.ticket_position}-savol`
-                            : 'Variantga kiritilmagan'}
+                            ? `${question.ticket_number}${t('-variant')} · ${question.ticket_position}${t('-savol')}`
+                            : t('Variantga kiritilmagan')}
                         </span>
                       </td>
                       <td>
                         <span className="badge badge-success">
                           <i />
-                          Chop etilgan
+                          {t('Chop etilgan')}
                         </span>
                       </td>
                       <td>
@@ -430,7 +457,7 @@ export default function AdminNewQuestions() {
                                 )
                               }
                             >
-                              Tahrirlash
+                              {t('Tahrirlash')}
                             </button>
                           ) : (
                             adminQuestion && (
@@ -439,11 +466,11 @@ export default function AdminNewQuestions() {
                                   className="button button-quiet button-small"
                                   onClick={() => setEditing(adminQuestion)}
                                 >
-                                  Tahrirlash
+                                  {t('Tahrirlash')}
                                 </button>
                                 <button
                                   className="icon-button danger-icon"
-                                  title="O‘chirish"
+                                  title={t('O‘chirish')}
                                   onClick={() => void remove(adminQuestion)}
                                 >
                                   🗑
@@ -461,14 +488,16 @@ export default function AdminNewQuestions() {
           </table>
         </div>
         <div className="table-footer">
-          <span>{count.toLocaleString()} ta yangi deb belgilangan savol</span>
+          <span>
+            {count.toLocaleString()} {t('ta yangi deb belgilangan savol')}
+          </span>
           <div className="pagination">
             <button
               className="button button-quiet button-small"
               onClick={() => setPage((current) => Math.max(0, current - 1))}
               disabled={page === 0}
             >
-              ← Oldingi
+              ← {t('Oldingi')}
             </button>
             <span>
               {page + 1} / {Math.max(1, Math.ceil(count / PAGE_SIZE))}
@@ -478,7 +507,7 @@ export default function AdminNewQuestions() {
               onClick={() => setPage((current) => current + 1)}
               disabled={(page + 1) * PAGE_SIZE >= count}
             >
-              Keyingi →
+              {t('Keyingi')} →
             </button>
           </div>
         </div>
@@ -524,6 +553,7 @@ export function NewQuestionEditor({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t } = useSiteLanguage()
   const [draft, setDraft] = useState<Draft>(() =>
     question
       ? {
@@ -608,7 +638,7 @@ export function NewQuestionEditor({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (QUESTION_LOCALES.some((key) => !draft.text[key].trim())) {
-      setError('Savol matnini uchala tilda ham to‘ldiring.')
+      setError(t('Savol matnini uchala tilda ham to‘ldiring.'))
       return
     }
     const optionIndexes = draft.options_i18n
@@ -620,7 +650,7 @@ export function NewQuestionEditor({
       draft.options_i18n[index]['uz-Latn'].trim()
     )
     if (options.length < 2) {
-      setError('Kamida ikkita javob variantini to‘ldiring.')
+      setError(t('Kamida ikkita javob variantini to‘ldiring.'))
       return
     }
     if (
@@ -628,11 +658,11 @@ export function NewQuestionEditor({
         QUESTION_LOCALES.some((key) => !draft.options_i18n[index][key].trim())
       )
     ) {
-      setError('Har bir javob variantini uchala tilda ham to‘ldiring.')
+      setError(t('Har bir javob variantini uchala tilda ham to‘ldiring.'))
       return
     }
     if (!optionIndexes.includes(draft.correct_index)) {
-      setError('To‘g‘ri javob sifatida bo‘sh variant tanlangan.')
+      setError(t('To‘g‘ri javob sifatida bo‘sh variant tanlangan.'))
       return
     }
     setBusy(true)
@@ -693,44 +723,43 @@ export function NewQuestionEditor({
 
   return (
     <Modal
-      title={question ? 'Yangi savolni tahrirlash' : 'Yangi savol qo‘shish'}
+      className="question-editor-modal"
+      title={
+        question ? t('Yangi savolni tahrirlash') : t('Yangi savol qo‘shish')
+      }
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
-      submitLabel={question ? 'Saqlash' : 'Savol qo‘shish'}
+      submitLabel={question ? t('Saqlash') : t('Savol qo‘shish')}
     >
       {error && <Notice message={error} />}
-      <label className="field">
-        <span>Darsga biriktirish</span>
-        <select
-          value={draft.lesson_id ?? ''}
-          onChange={(event) =>
-            update(
-              'lesson_id',
-              event.target.value ? Number(event.target.value) : null
-            )
-          }
-        >
-          <option value="">Dars tanlanmagan</option>
-          {lessons.map((lesson) => (
-            <option key={lesson.id} value={lesson.id}>
-              {lesson.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="field-hint">
-        Yangi savol, raqamli va o‘xshash savol tasniflari dars tanlovidan
-        mustaqil.
-      </p>
-      <div className="checkbox-grid classification-grid">
+      <div className="question-editor-assignment-row">
+        <label className="field">
+          <span>{t('Darsga biriktirish')}</span>
+          <select
+            value={draft.lesson_id ?? ''}
+            onChange={(event) =>
+              update(
+                'lesson_id',
+                event.target.value ? Number(event.target.value) : null
+              )
+            }
+          >
+            <option value="">{t('Dars tanlanmagan')}</option>
+            {lessons.map((lesson) => (
+              <option key={lesson.id} value={lesson.id}>
+                {lesson.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           <input
             type="checkbox"
             checked={draft.is_new}
             onChange={(event) => update('is_new', event.target.checked)}
           />{' '}
-          Yangi savol
+          {t('Yangi savol')}
         </label>
         <label>
           <input
@@ -738,7 +767,7 @@ export function NewQuestionEditor({
             checked={draft.is_numeric}
             onChange={(event) => update('is_numeric', event.target.checked)}
           />{' '}
-          Raqamli savol
+          {t('Raqamli savol')}
         </label>
         <label>
           <input
@@ -746,10 +775,14 @@ export function NewQuestionEditor({
             checked={draft.is_similar}
             onChange={(event) => update('is_similar', event.target.checked)}
           />{' '}
-          O‘xshash savollar to‘plamiga qo‘shish
+          {t('O‘xshash savollar')}
         </label>
       </div>
-      <div className="language-tabs" role="tablist" aria-label="Savol tili">
+      <div
+        className="language-tabs"
+        role="tablist"
+        aria-label={t('Savol tili')}
+      >
         {QUESTION_LOCALES.map((key) => (
           <button
             key={key}
@@ -763,32 +796,47 @@ export function NewQuestionEditor({
           </button>
         ))}
       </div>
-      <label className="field">
-        <span>Savol matni · {QUESTION_LOCALE_LABELS[locale]} *</span>
-        <textarea
-          rows={3}
-          value={draft.text[locale]}
-          onChange={(event) =>
-            update('text', { ...draft.text, [locale]: event.target.value })
-          }
-          required
+      <div className="question-editor-prompt-row">
+        <div className="question-editor-localized-prompt">
+          <label className="field">
+            <div className="question-editor-prompt-label-row">
+              <span>
+                {t('Savol matni')} · {QUESTION_LOCALE_LABELS[locale]} *
+              </span>
+              <TranslateButton
+                sourceText={draft.text['uz-Latn']}
+                onTranslated={(translations) =>
+                  setDraft((current) => ({
+                    ...current,
+                    text: { ...current.text, ...translations },
+                  }))
+                }
+              />
+            </div>
+            <textarea
+              rows={3}
+              value={draft.text[locale]}
+              onChange={(event) =>
+                update('text', { ...draft.text, [locale]: event.target.value })
+              }
+              required
+            />
+          </label>
+        </div>
+        <ImageListEditor
+          label={t('Savol rasmlari')}
+          images={draft.image_urls}
+          busy={busy}
+          maxImages={1}
+          onChange={(images) => update('image_urls', images)}
+          onUpload={(files) => uploadImages(files, 'image_urls')}
         />
-      </label>
-      <TranslateButton
-        sourceText={draft.text['uz-Latn']}
-        onTranslated={(translations) =>
-          setDraft((current) => ({
-            ...current,
-            text: { ...current.text, ...translations },
-          }))
-        }
-      />
-      <div className="field">
-        <span>Javoblar (to‘g‘ri javobni belgilang) *</span>
+      </div>
+      <div className="field question-editor-answers">
+        <span>{t('Javoblar (to‘g‘ri javobni belgilang)')} *</span>
         <div className="option-editor">
           {draft.options_i18n.map((option, index) => {
-            const label =
-              index < 26 ? String.fromCharCode(65 + index) : String(index + 1)
+            const label = `F${index + 1}`
             return (
               <div
                 className={`option-input localized-option-input${draft.correct_index === index ? ' correct-option' : ''}`}
@@ -804,7 +852,7 @@ export function NewQuestionEditor({
                   <b>{label}</b>
                   <input
                     value={option[locale]}
-                    placeholder={`${label} javob`}
+                    placeholder={`${label} ${t('javob')}`}
                     onChange={(event) =>
                       update(
                         'options_i18n',
@@ -834,7 +882,7 @@ export function NewQuestionEditor({
                 <button
                   type="button"
                   className="icon-button danger-icon option-remove"
-                  title="Javobni olib tashlash"
+                  title={t('Javobni olib tashlash')}
                   disabled={draft.options_i18n.length <= 1}
                   onClick={() => {
                     update(
@@ -872,47 +920,47 @@ export function NewQuestionEditor({
             update('options', [...draft.options, ''])
           }}
         >
-          ＋ Variant qo‘shish
+          ＋ {t('Variant qo‘shish')}
         </button>
       </div>
-      <ImageListEditor
-        label="Savol rasmlari"
-        images={draft.image_urls}
-        busy={busy}
-        maxImages={1}
-        onChange={(images) => update('image_urls', images)}
-        onUpload={(files) => uploadImages(files, 'image_urls')}
-      />
-      <label className="field">
-        <span>Tushuntirish · {QUESTION_LOCALE_LABELS[locale]}</span>
-        <textarea
-          rows={2}
-          value={draft.explanation[locale]}
-          onChange={(event) =>
-            update('explanation', {
-              ...draft.explanation,
-              [locale]: event.target.value,
-            })
-          }
+      <div className="question-editor-detail-grid question-editor-explanation-row">
+        <div className="question-editor-explanation">
+          <label className="field">
+            <div className="question-editor-prompt-label-row">
+              <span>
+                {t('Tushuntirish')} · {QUESTION_LOCALE_LABELS[locale]}
+              </span>
+              <TranslateButton
+                sourceText={draft.explanation['uz-Latn']}
+                onTranslated={(translations) =>
+                  setDraft((current) => ({
+                    ...current,
+                    explanation: { ...current.explanation, ...translations },
+                  }))
+                }
+              />
+            </div>
+            <textarea
+              rows={3}
+              value={draft.explanation[locale]}
+              onChange={(event) =>
+                update('explanation', {
+                  ...draft.explanation,
+                  [locale]: event.target.value,
+                })
+              }
+            />
+          </label>
+        </div>
+        <ImageListEditor
+          label={t('Tushuntirish rasmlari')}
+          images={draft.explanation_image_urls}
+          busy={busy}
+          maxImages={1}
+          onChange={(images) => update('explanation_image_urls', images)}
+          onUpload={(files) => uploadImages(files, 'explanation_image_urls')}
         />
-      </label>
-      <TranslateButton
-        sourceText={draft.explanation['uz-Latn']}
-        onTranslated={(translations) =>
-          setDraft((current) => ({
-            ...current,
-            explanation: { ...current.explanation, ...translations },
-          }))
-        }
-      />
-      <ImageListEditor
-        label="Tushuntirish rasmlari"
-        images={draft.explanation_image_urls}
-        busy={busy}
-        maxImages={1}
-        onChange={(images) => update('explanation_image_urls', images)}
-        onUpload={(files) => uploadImages(files, 'explanation_image_urls')}
-      />
+      </div>
     </Modal>
   )
 }

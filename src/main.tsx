@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ConfirmProvider } from './components/ConfirmProvider'
+import { SiteLanguageProvider } from './lib/siteLanguage'
 import './styles.css'
 
 if ('serviceWorker' in navigator) {
@@ -16,9 +17,11 @@ if ('serviceWorker' in navigator) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <ConfirmProvider>
-        <App />
-      </ConfirmProvider>
+      <SiteLanguageProvider>
+        <ConfirmProvider>
+          <App />
+        </ConfirmProvider>
+      </SiteLanguageProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

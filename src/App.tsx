@@ -19,6 +19,14 @@ import type { Session } from '@supabase/supabase-js'
 import { isSupabaseConfigured, requireSupabase } from './lib/supabase'
 import type { AdminProfile } from './lib/types'
 import { getErrorMessage } from './lib/types'
+import { useSiteLanguage } from './lib/siteLanguage'
+import type { SiteLanguage } from './lib/siteLanguage'
+import {
+  consumePwaInstallPrompt,
+  isPwaInstalled,
+  markPwaInstalled,
+  subscribeToPwaInstall,
+} from './lib/pwaInstall'
 import { Notice, ToastProvider } from './components/Notice'
 import Dashboard from './pages/Dashboard'
 import Questions from './pages/Questions'
@@ -27,11 +35,6 @@ import Codes from './pages/Codes'
 import Account from './pages/Account'
 import Categories from './pages/Categories'
 import logo from './logo.jpg'
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
-}
 
 interface AuthContextValue {
   profile: AdminProfile
@@ -60,18 +63,49 @@ export function PageHeader({
   description?: string
   action?: ReactNode
 }) {
+  const { t } = useSiteLanguage()
   return (
     <div className="page-heading">
       <div>
-        <h1>{title}</h1>
-        {description && <p>{description}</p>}
+        <h1>{t(title)}</h1>
+        {description && <p>{t(description)}</p>}
       </div>
       {action && <div className="page-action">{action}</div>}
     </div>
   )
 }
 
+const siteLanguageOptions: { value: SiteLanguage; label: string }[] = [
+  { value: 'uz-Latn', label: 'UZ' },
+  { value: 'uz-Cyrl', label: 'ЎЗ' },
+  { value: 'ru', label: 'RU' },
+]
+
+function SiteLanguageSwitcher({ className = '' }: { className?: string }) {
+  const { language, setLanguage, t } = useSiteLanguage()
+  return (
+    <div
+      className={`site-language-switch ${className}`.trim()}
+      role="group"
+      aria-label={t('Sayt tili')}
+    >
+      {siteLanguageOptions.map(({ value, label }) => (
+        <button
+          type="button"
+          key={value}
+          className={language === value ? 'is-selected' : ''}
+          aria-pressed={language === value}
+          onClick={() => setLanguage(value)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Login() {
+  const { t } = useSiteLanguage()
   const navigate = useNavigate()
   const [method, setMethod] = useState<'magic-link' | 'password'>('magic-link')
   const [email, setEmail] = useState('')
@@ -105,14 +139,12 @@ function Login() {
             })
       if (signInError) throw signInError
       if (method === 'magic-link') {
-        setMessage(
-          'Kirish havolasi email manzilingizga yuborildi. Xatdagi havolani ochib panelga kiring.'
-        )
+        setMessage(t('Kirish havolasi email manzilingizga yuborildi. Xatdagi havolani ochib panelga kiring.'))
       } else {
         navigate('/', { replace: true })
       }
     } catch (reason) {
-      setError(getErrorMessage(reason))
+      setError(t(getErrorMessage(reason)))
     } finally {
       setBusy(false)
     }
@@ -121,18 +153,19 @@ function Login() {
   return (
     <main className="login-page">
       <section className="login-card">
+        <SiteLanguageSwitcher className="login-language-switch" />
         <img
           className="brand-logo brand-logo-login"
           src={logo}
           alt="Azizbek Prava Akademiyasi"
         />
         <p className="eyebrow">AZIZBEK PRAVA AKADEMIYASI · ADMIN</p>
-        <h1>Boshqaruv paneli</h1>
+        <h1>{t('Boshqaruv paneli')}</h1>
         <p className="login-description">
-          Davom etish uchun admin hisobingizga kiring.
+          {t('Davom etish uchun admin hisobingizga kiring.')}
         </p>
         {!isSupabaseConfigured && (
-          <Notice message="Supabase sozlanmagan. Frontend papkasidagi .env.example faylidan .env yarating va Supabase URL hamda anon public key ni kiriting." />
+          <Notice message={t('Supabase sozlanmagan. Frontend papkasidagi .env.example faylidan .env yarating va Supabase URL hamda anon public key ni kiriting.')} />
         )}
         {error && <Notice message={error} />}
         {message && <Notice message={message} kind="success" />}
@@ -146,7 +179,7 @@ function Login() {
               setMessage('')
             }}
           >
-            Email havolasi
+            {t('Email havolasi')}
           </button>
           <button
             type="button"
@@ -157,12 +190,12 @@ function Login() {
               setMessage('')
             }}
           >
-            Login va parol
+            {t('Login va parol')}
           </button>
         </div>
         <form className="login-form" onSubmit={submit}>
           <label className="field">
-            <span>Admin email</span>
+            <span>{t('Admin email')}</span>
             <input
               autoComplete="username"
               type="email"
@@ -173,7 +206,7 @@ function Login() {
           </label>
           {method === 'password' && (
             <label className="field">
-              <span>Parol</span>
+              <span>{t('Parol')}</span>
               <input
                 autoComplete="current-password"
                 type="password"
@@ -188,10 +221,10 @@ function Login() {
             disabled={busy || !isSupabaseConfigured}
           >
             {busy
-              ? 'Kutilmoqda…'
+              ? t('Kutilmoqda…')
               : method === 'magic-link'
-                ? 'Gmail’ga kirish havolasini yuborish'
-                : 'Login va parol bilan kirish'}
+                ? t('Gmail’ga kirish havolasini yuborish')
+                : t('Login va parol bilan kirish')}
           </button>
         </form>
       </section>
@@ -206,20 +239,15 @@ function AdminLayout({
 }: Pick<AuthContextValue, 'profile' | 'refreshProfile'> & {
   children: ReactNode
 }) {
+  const { t } = useSiteLanguage()
   const navigate = useNavigate()
   const location = useLocation()
   const [signOutError, setSignOutError] = useState('')
   const [signingOut, setSigningOut] = useState(false)
   const [backHandler, setBackHandler] = useState<(() => void) | null>(null)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
-  const [installPrompt, setInstallPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null)
   const [installHelp, setInstallHelp] = useState('')
-  const [appInstalled, setAppInstalled] = useState(
-    () =>
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (navigator as Navigator & { standalone?: boolean }).standalone === true
-  )
+  const [appInstalled, setAppInstalled] = useState(() => isPwaInstalled())
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('admin-theme') === 'light' ? 'light' : 'dark'
@@ -245,21 +273,13 @@ function AdminLayout({
   }, [])
 
   useEffect(() => {
-    const handleInstallPrompt = (event: Event) => {
-      event.preventDefault()
-      setInstallPrompt(event as BeforeInstallPromptEvent)
+    const syncInstallState = () => {
+      setAppInstalled(isPwaInstalled())
+      if (isPwaInstalled()) setInstallHelp('')
     }
-    const handleInstalled = () => {
-      setAppInstalled(true)
-      setInstallPrompt(null)
-      setInstallHelp('')
-    }
-    window.addEventListener('beforeinstallprompt', handleInstallPrompt)
-    window.addEventListener('appinstalled', handleInstalled)
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
-      window.removeEventListener('appinstalled', handleInstalled)
-    }
+    syncInstallState()
+    const unsubscribe = subscribeToPwaInstall(syncInstallState)
+    return () => unsubscribe()
   }, [])
 
   useEffect(() => {
@@ -308,17 +328,20 @@ function AdminLayout({
 
   async function installApp() {
     setInstallHelp('')
-    if (!installPrompt) {
+    const prompt = consumePwaInstallPrompt()
+    if (!prompt) {
       setInstallHelp(
         'Brauzer menyusidan “Ilovani o‘rnatish” yoki “Bosh ekranga qo‘shish” bandini tanlang.'
       )
       return
     }
     try {
-      await installPrompt.prompt()
-      const { outcome } = await installPrompt.userChoice
-      setInstallPrompt(null)
-      if (outcome === 'accepted') setAppInstalled(true)
+      await prompt.prompt()
+      const { outcome } = await prompt.userChoice
+      if (outcome === 'accepted') {
+        markPwaInstalled()
+        setAppInstalled(true)
+      }
     } catch (error) {
       console.error('PWA ilovasini o‘rnatib bo‘lmadi:', error)
       setInstallHelp(
@@ -356,41 +379,40 @@ function AdminLayout({
               <span className="admin-brand-copy">
                 <strong>AZIZBEK PRAVA</strong>
                 <em>AKADEMIYASI</em>
-                <small>ADMIN PANEL</small>
               </span>
+            </Link>
+            <Link
+              className="global-home-button"
+              to="/"
+              title={t('Bosh sahifa')}
+              aria-label={t('Bosh sahifa')}
+            >
+              <span>{t('Bosh menu')}</span>
             </Link>
             <button
               type="button"
               className="global-back-button"
               onClick={goBack}
-              title="Orqaga"
-              aria-label="Orqaga"
+              title={t('Orqaga')}
+              aria-label={t('Orqaga')}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M19 12H5m7 7-7-7 7-7" />
               </svg>
+              <span>{t('Orqaga')}</span>
             </button>
-            <Link
-              className="global-home-button"
-              to="/"
-              title="Bosh sahifa"
-              aria-label="Bosh sahifa"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7" />
-              </svg>
-            </Link>
+            <SiteLanguageSwitcher />
             <button
               type="button"
               className="theme-toggle-button"
               onClick={() =>
                 setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
               }
-              title={theme === 'dark' ? 'Kunduzgi rejim' : 'Tungi rejim'}
+              title={t(theme === 'dark' ? 'Kunduzgi rejim' : 'Tungi rejim')}
               aria-label={
                 theme === 'dark'
-                  ? 'Kunduzgi rejimga o‘tish'
-                  : 'Tungi rejimga o‘tish'
+                  ? t('Kunduzgi rejimga o‘tish')
+                  : t('Tungi rejimga o‘tish')
               }
             >
               {theme === 'dark' ? (
@@ -410,10 +432,10 @@ function AdminLayout({
                   type="button"
                   className={`admin-profile-button${profileMenuOpen ? ' is-open' : ''}`}
                   onClick={() => setProfileMenuOpen((open) => !open)}
-                  aria-label="Profil menyusini ochish"
+                  aria-label={t('Profil menyusini ochish')}
                   aria-expanded={profileMenuOpen}
                   aria-haspopup="true"
-                  title="Profil"
+                  title={t('Profil')}
                 >
                   <span className="profile-avatar">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -437,7 +459,7 @@ function AdminLayout({
                         </svg>
                       </span>
                       <span className="profile-dropdown-identity">
-                        <strong>{profile.full_name || 'Admin'}</strong>
+                        <strong>{profile.full_name || t('Admin')}</strong>
                         <small>{profile.email}</small>
                       </span>
                     </div>
@@ -451,7 +473,7 @@ function AdminLayout({
                         <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
                         <path d="m19.4 15 .1.1a1.8 1.8 0 1 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3 .9v.2a1.8 1.8 0 1 1-3.6 0v-.2a1.8 1.8 0 0 0-3-.9l-.1.1a1.8 1.8 0 1 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-.9-3H3.7a1.8 1.8 0 1 1 0-3.6h.2a1.8 1.8 0 0 0 .9-3l-.1-.1a1.8 1.8 0 1 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3-.9v-.2a1.8 1.8 0 1 1 3.6 0v.2a1.8 1.8 0 0 0 3 .9l.1-.1a1.8 1.8 0 1 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 .9 3h.2a1.8 1.8 0 1 1 0 3.6h-.2a1.8 1.8 0 0 0-.9 3Z" />
                       </svg>
-                      <span>Profil va sozlamalar</span>
+                      <span>{t('Profil va sozlamalar')}</span>
                       <svg
                         className="profile-action-arrow"
                         viewBox="0 0 24 24"
@@ -469,12 +491,12 @@ function AdminLayout({
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <path d="M12 3v12m-5-5 5 5 5-5M5 17v3h14v-3" />
                         </svg>
-                        <span>Ilovani o‘rnatish</span>
+                        <span>{t('Ilovani o‘rnatish')}</span>
                       </button>
                     )}
                     {installHelp && (
                       <p className="profile-dropdown-error profile-install-help">
-                        {installHelp}
+                        {t(installHelp)}
                       </p>
                     )}
                     <button
@@ -487,8 +509,8 @@ function AdminLayout({
                       }
                       aria-label={
                         theme === 'dark'
-                          ? 'Kunduzgi rejimga o‘tish'
-                          : 'Tungi rejimga o‘tish'
+                          ? t('Kunduzgi rejimga o‘tish')
+                          : t('Tungi rejimga o‘tish')
                       }
                     >
                       {theme === 'dark' ? (
@@ -502,7 +524,7 @@ function AdminLayout({
                         </svg>
                       )}
                       <span>
-                        {theme === 'dark' ? 'Kunduzgi rejim' : 'Tungi rejim'}
+                        {t(theme === 'dark' ? 'Kunduzgi rejim' : 'Tungi rejim')}
                       </span>
                     </button>
                     <button
@@ -514,11 +536,11 @@ function AdminLayout({
                         <path d="M10 17l5-5-5-5M15 12H3M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
                       </svg>
                       <span>
-                        {signingOut ? 'Chiqilmoqda…' : 'Hisobdan chiqish'}
+                        {t(signingOut ? 'Chiqilmoqda…' : 'Hisobdan chiqish')}
                       </span>
                     </button>
                     {signOutError && (
-                      <p className="profile-dropdown-error">{signOutError}</p>
+                      <p className="profile-dropdown-error">{t(signOutError)}</p>
                     )}
                   </div>
                 )}
@@ -555,12 +577,13 @@ function ProtectedRoutes({
   authError: string
   refreshProfile: () => Promise<void>
 }) {
+  const { t } = useSiteLanguage()
   if (!session) return <Login />
   if (profileLoading)
     return (
       <main className="loading-screen">
         <div className="spinner" />
-        <span>Admin huquqlari tekshirilmoqda…</span>
+        <span>{t('Admin huquqlari tekshirilmoqda…')}</span>
       </main>
     )
   if (!profile) {
@@ -572,16 +595,18 @@ function ProtectedRoutes({
             src={logo}
             alt="Azizbek Prava Akademiyasi"
           />
-          <h1>Admin huquqi topilmadi</h1>
+          <h1>{t('Admin huquqi topilmadi')}</h1>
           <p className="login-description">
-            {authError ||
-              'Bu foydalanuvchi admins jadvalida faol admin sifatida ro‘yxatdan o‘tmagan.'}
+            {t(
+              authError ||
+                'Bu foydalanuvchi admins jadvalida faol admin sifatida ro‘yxatdan o‘tmagan.'
+            )}
           </p>
           <button
             className="button button-quiet button-wide"
             onClick={() => void requireSupabase().auth.signOut()}
           >
-            Hisobdan chiqish
+            {t('Hisobdan chiqish')}
           </button>
         </section>
       </main>
@@ -608,6 +633,7 @@ function ProtectedRoutes({
 }
 
 export default function App() {
+  const { t } = useSiteLanguage()
   const [session, setSession] = useState<Session | null>(null)
   const sessionUserId = useRef<string | null>(null)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
@@ -743,13 +769,13 @@ export default function App() {
     return (
       <main className="loading-screen">
         <div className="spinner" />
-        <span>Yuklanmoqda…</span>
+        <span>{t('Yuklanmoqda…')}</span>
       </main>
     )
   return (
     <ToastProvider>
       {authError && !session && (
-        <Notice message={authError} onClose={() => setAuthError('')} />
+        <Notice message={t(authError)} onClose={() => setAuthError('')} />
       )}
       <ProtectedRoutes
         session={session}

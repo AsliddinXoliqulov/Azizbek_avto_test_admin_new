@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { PageHeader, useAdmin } from '../App'
 import { Notice } from '../components/Notice'
 import { requireSupabase } from '../lib/supabase'
+import { useSiteLanguage } from '../lib/siteLanguage'
 import { getErrorMessage } from '../lib/types'
 
 const FALLBACK_IMAGE_SETTING = 'no_question_image_url'
@@ -11,6 +12,7 @@ const FALLBACK_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/web
 
 export default function Account() {
   const { profile, uiScale, setUiScale } = useAdmin()
+  const { t } = useSiteLanguage()
   const [isNarrowScreen, setIsNarrowScreen] = useState(() => window.matchMedia('(max-width: 800px)').matches)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -79,11 +81,11 @@ export default function Account() {
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (password.length < 8) {
-      setError('Yangi parol kamida 8 ta belgidan iborat bo‘lsin.')
+      setError(t('Yangi parol kamida 8 ta belgidan iborat bo‘lsin.'))
       return
     }
     if (password !== confirmPassword) {
-      setError('Parol va tasdiqlash paroli mos kelmadi.')
+      setError(t('Parol va tasdiqlash paroli mos kelmadi.'))
       return
     }
     start()
@@ -92,7 +94,7 @@ export default function Account() {
       if (updateError) throw updateError
       setPassword('')
       setConfirmPassword('')
-      setSuccess('Parolingiz yangilandi. Eski parol talab qilinmadi.')
+      setSuccess(t('Parolingiz yangilandi. Eski parol talab qilinmadi.'))
     } catch (reason) {
       setError(getErrorMessage(reason))
     } finally {
@@ -108,11 +110,11 @@ export default function Account() {
       return
     }
     if (!FALLBACK_IMAGE_MIME_TYPES.has(file.type)) {
-      setError('Faqat JPG, PNG yoki WebP formatidagi rasmni tanlang.')
+      setError(t('Faqat JPG, PNG yoki WebP formatidagi rasmni tanlang.'))
       return
     }
     if (file.size > MAX_FALLBACK_IMAGE_SIZE) {
-      setError('Rasm hajmi 12 MB dan oshmasligi kerak.')
+      setError(t('Rasm hajmi 12 MB dan oshmasligi kerak.'))
       return
     }
     setSelectedImage(file)
@@ -149,7 +151,7 @@ export default function Account() {
       if (settingError) throw settingError
       setFallbackImageUrl(url)
       setSelectedImage(null)
-      setSuccess('Rasm saqlandi. Ilovada yangilanish sinxronlangach ko‘rinadi.')
+      setSuccess(t('Rasm saqlandi. Ilovada yangilanish sinxronlangach ko‘rinadi.'))
     } catch (reason) {
       setError(getErrorMessage(reason))
     } finally {
@@ -175,7 +177,7 @@ export default function Account() {
       if (settingError) throw settingError
       setFallbackImageUrl('')
       setSelectedImage(null)
-      setSuccess('Maxsus rasm olib tashlandi. Ilovada namuna.png ko‘rsatiladi.')
+      setSuccess(t('Maxsus rasm olib tashlandi. Ilovada namuna.png ko‘rsatiladi.'))
     } catch (reason) {
       setError(getErrorMessage(reason))
     } finally {
@@ -191,38 +193,38 @@ export default function Account() {
       <div className="account-layout">
         <div className="account-main">
           <section className="panel-card account-card">
-            <div className="account-card-heading"><span className="account-icon violet-bg">⌑</span><div><h2>Yangi parol</h2><p>Joriy parol so‘ralmaydi; akkauntga kirgan bo‘lishingiz kifoya.</p></div></div>
+            <div className="account-card-heading"><span className="account-icon violet-bg">⌑</span><div><h2>{t('Yangi parol')}</h2><p>{t('Joriy parol so‘ralmaydi; akkauntga kirgan bo‘lishingiz kifoya.')}</p></div></div>
             <form className="account-form" onSubmit={savePassword}>
               <div className="form-grid">
-                <label className="field"><span>Yangi parol</span><input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required /></label>
-                <label className="field"><span>Yangi parolni tasdiqlang</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} required /></label>
+                <label className="field"><span>{t('Yangi parol')}</span><input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required /></label>
+                <label className="field"><span>{t('Yangi parolni tasdiqlang')}</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} required /></label>
               </div>
-              <div className="account-submit"><button className="button button-primary" disabled={busy}>{busy ? 'Saqlanmoqda…' : 'Yangi parolni saqlash'}</button></div>
+              <div className="account-submit"><button className="button button-primary" disabled={busy}>{busy ? t('Saqlanmoqda…') : t('Yangi parolni saqlash')}</button></div>
             </form>
           </section>
         </div>
 
         <aside className="account-side">
           <section className="panel-card account-card">
-            <div className="card-heading account-side-heading"><h2>Rasmi yo‘q savollar uchun rasm</h2></div>
+            <div className="card-heading account-side-heading"><h2>{t('Rasmi yo‘q savollar uchun rasm')}</h2></div>
             <p className="account-fallback-description">
-              Bitta rasm saqlanadi va faqat savolning o‘z rasmi bo‘lmaganda ishlatiladi.
-              Savollarga alohida nusxa yozilmaydi.
+              {t('Bitta rasm saqlanadi va faqat savolning o‘z rasmi bo‘lmaganda ishlatiladi.')}
+              {' '}{t('Savollarga alohida nusxa yozilmaydi.')}
             </p>
             <div className="account-fallback-preview">
               {previewUrl || fallbackImageUrl ? (
                 <img
                   src={previewUrl || fallbackImageUrl}
-                  alt="Rasmi yo‘q savollar uchun tanlangan rasm"
+                  alt={t('Rasmi yo‘q savollar uchun tanlangan rasm')}
                 />
               ) : (
-                <span>{imageLoading ? 'Rasm yuklanmoqda…' : 'Hozir namuna.png ishlatiladi'}</span>
+                <span>{imageLoading ? t('Rasm yuklanmoqda…') : t('Hozir namuna.png ishlatiladi')}</span>
               )}
             </div>
             {canManageFallbackImage ? (
               <>
                 <label className="field account-fallback-picker">
-                  <span>Rasm tanlang (JPG, PNG yoki WebP; 12 MB gacha)</span>
+                  <span>{t('Rasm tanlang (JPG, PNG yoki WebP; 12 MB gacha)')}</span>
                   <input
                     className="file-input"
                     type="file"
@@ -242,7 +244,7 @@ export default function Account() {
                       onClick={() => void clearFallbackImage()}
                       disabled={imageBusy || imageLoading}
                     >
-                      Namuna rasmini tiklash
+                      {t('Namuna rasmini tiklash')}
                     </button>
                   )}
                   <button
@@ -251,20 +253,20 @@ export default function Account() {
                     onClick={() => void saveFallbackImage()}
                     disabled={imageBusy || imageLoading || !selectedImage}
                   >
-                    {imageBusy ? 'Saqlanmoqda…' : 'Rasmni saqlash'}
+                    {imageBusy ? t('Saqlanmoqda…') : t('Rasmni saqlash')}
                   </button>
                 </div>
               </>
             ) : (
-              <p className="field-hint">Bu rasmni faqat super admin o‘zgartira oladi.</p>
+              <p className="field-hint">{t('Bu rasmni faqat super admin o‘zgartira oladi.')}</p>
             )}
-            <section className="ui-scale-card ui-scale-card-compact" aria-label="Interfeys o‘lchami">
+            <section className="ui-scale-card ui-scale-card-compact" aria-label={t('Interfeys o‘lchami')}>
               <div className="ui-scale-control">
                 <button
                   className="ui-scale-step"
                   type="button"
-                  aria-label="Interfeysni kichraytirish"
-                  title="Kichraytirish"
+                  aria-label={t('Interfeysni kichraytirish')}
+                  title={t('Kichraytirish')}
                   disabled={scaleValue === 1}
                   onClick={() => setUiScale(Math.max(1, scaleValue - 1))}
                 >−</button>
@@ -275,7 +277,7 @@ export default function Account() {
                     max={scaleMax}
                     step="1"
                     value={scaleValue}
-                    aria-label="Interfeys o‘lchami"
+                    aria-label={t('Interfeys o‘lchami')}
                     aria-valuetext={`${scaleValue} / 100`}
                     onChange={(event) => setUiScale(Number(event.target.value))}
                   />
@@ -283,8 +285,8 @@ export default function Account() {
                 <button
                   className="ui-scale-step"
                   type="button"
-                  aria-label="Interfeysni kattalashtirish"
-                  title="Kattalashtirish"
+                  aria-label={t('Interfeysni kattalashtirish')}
+                  title={t('Kattalashtirish')}
                   disabled={scaleValue === scaleMax}
                   onClick={() => setUiScale(Math.min(scaleMax, scaleValue + 1))}
                 >+</button>

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cleanOsonPravaWatermark } from '../lib/cleanOsonPravaWatermark'
+import { useSiteLanguage } from '../lib/siteLanguage'
 
 export function ImageListEditor({
   label,
@@ -16,11 +17,24 @@ export function ImageListEditor({
   onUpload: (files: File[]) => Promise<void>
   maxImages?: number
 }) {
+  const { t } = useSiteLanguage()
   const [url, setUrl] = useState('')
-  const [cleanWatermark, setCleanWatermark] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [processingError, setProcessingError] = useState('')
+  const [expandedImage, setExpandedImage] = useState<{
+    src: string
+    name: string
+  } | null>(null)
   const canAddImage = maxImages == null || images.length < maxImages
+
+  useEffect(() => {
+    if (!expandedImage) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpandedImage(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [expandedImage])
 
   async function uploadFiles(files: File[]) {
     setProcessing(true)
@@ -28,12 +42,12 @@ export function ImageListEditor({
     try {
       const uploadFiles: File[] = []
       for (const file of files) {
-        uploadFiles.push(cleanWatermark ? await cleanOsonPravaWatermark(file) : file)
+        uploadFiles.push(await cleanOsonPravaWatermark(file))
       }
       await onUpload(uploadFiles)
     } catch (reason) {
       setProcessingError(
-        reason instanceof Error ? reason.message : 'Rasmni qayta ishlab bo‘lmadi.'
+        t(reason instanceof Error ? reason.message : 'Rasmni qayta ishlab bo‘lmadi.')
       )
     } finally {
       setProcessing(false)
@@ -68,70 +82,117 @@ export function ImageListEditor({
 
   return (
     <div className="field image-list-editor" onPaste={pasteImage} tabIndex={0}>
-      <span>{label}</span>
-      <small className="field-hint">Rasmni clipboard’ga nusxa oling va shu yerda Ctrl+V bosing.</small>
-      <label className="image-watermark-toggle">
-        <input
-          type="checkbox"
-          checked={cleanWatermark}
-          disabled={busy || processing}
-          onChange={(event) => setCleanWatermark(event.currentTarget.checked)}
-        />
-        <span>Pastki o‘ngdagi OsonPrava belgisini tozalash</span>
-      </label>
-      <small className="field-hint">
-        Markazdagi watermark o‘zgartirilmaydi. Faqat tanlangan rasmga qo‘llanadi.
-      </small>
-      {processing && <small className="field-hint">Rasm tekshirilmoqda…</small>}
-      {processingError && <small className="field-hint image-processing-error">{processingError}</small>}
+      <span>{t(label)}</span>
+      {processing && <small className="field-hint">{t('Rasm tekshirilmoqda…')}</small>}
+      {processingError && <small className="field-hint image-processing-error">{t(processingError)}</small>}
       {images.length > 0 && (
-        <div className="image-list">
+        <div className={`image-list${maxImages === 1 ? ' image-list-single' : ''}`}>
           {images.map((image, index) => {
             const name = image.split('/').pop()?.split('?')[0] || image
             return (
-              <div className="image-preview" key={`${image}-${index}`}>
-                <img src={image} alt={name} title={name} />
-                <button
-                  type="button"
-                  className="image-remove"
-                  aria-label={`Rasmni olib tashlash: ${name}`}
-                  title="Rasmni olib tashlash"
-                  onClick={() => onChange(images.filter((_, imageIndex) => imageIndex !== index))}
-                >
-                  ×
-                </button>
-                <small title={name}>{name}</small>
+              <div
+                className={`image-preview${maxImages === 1 ? ' image-preview-single' : ''}`}
+                key={`${image}-${index}`}
+              >
+                {maxImages === 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="image-remove"
+                      aria-label={`${t('Rasmni olib tashlash')}: ${name}`}
+                      title={t('Rasmni olib tashlash')}
+                      onClick={() =>
+                        onChange(
+                          images.filter((_, imageIndex) => imageIndex !== index)
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                    <button
+                      type="button"
+                      className="image-preview-expand"
+                      onClick={() => setExpandedImage({ src: image, name })}
+                      aria-label={t('Rasmni kattalashtirish')}
+                      title={t('Rasmni kattalashtirish')}
+                    >
+                      <img src={image} alt={name} />
+                    </button>
+                    <span className="image-preview-name" title={name}>
+                      {name}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <img src={image} alt={name} title={name} />
+                    <button
+                      type="button"
+                      className="image-remove"
+                      aria-label={`${t('Rasmni olib tashlash')}: ${name}`}
+                      title={t('Rasmni olib tashlash')}
+                      onClick={() =>
+                        onChange(
+                          images.filter((_, imageIndex) => imageIndex !== index)
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                    <small title={name}>{name}</small>
+                  </>
+                )}
               </div>
             )
           })}
         </div>
       )}
-      {!canAddImage && <small className="field-hint">Yangi rasm qo‘shish uchun avval mavjud rasmni olib tashlang.</small>}
-      <input
-        className="file-input"
-        type="file"
-        accept="image/*"
-        multiple={maxImages == null || maxImages > 1}
-        disabled={busy || processing || !canAddImage}
-        onChange={(event) => {
-          const files = Array.from(event.currentTarget.files || [])
-            .slice(0, maxImages == null ? undefined : maxImages - images.length)
-          event.currentTarget.value = ''
-          if (files.length && canAddImage) void uploadFiles(files)
-        }}
-      />
-      <div className="image-url-row">
-        <input
-          type="url"
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder="Rasm URL manzili"
-          disabled={!canAddImage}
-        />
-        <button type="button" className="button button-quiet button-small" onClick={addUrl} disabled={!url.trim() || !canAddImage}>
-          URL qo‘shish
-        </button>
-      </div>
+      {canAddImage && (
+        <>
+          <input
+            className="file-input"
+            type="file"
+            accept="image/*"
+            multiple={maxImages == null || maxImages > 1}
+            disabled={busy || processing}
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files || [])
+                .slice(0, maxImages == null ? undefined : maxImages - images.length)
+              event.currentTarget.value = ''
+              if (files.length) void uploadFiles(files)
+            }}
+          />
+          <div className="image-url-row">
+            <input
+              type="url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder={t('Rasm URL manzili')}
+            />
+            <button type="button" className="button button-quiet button-small" onClick={addUrl} disabled={!url.trim()}>
+              {t('URL qo‘shish')}
+            </button>
+          </div>
+        </>
+      )}
+      {expandedImage && (
+        <div
+          className="image-lightbox"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExpandedImage(null)
+          }}
+        >
+          <button
+            type="button"
+            className="image-lightbox-close"
+            onClick={() => setExpandedImage(null)}
+            aria-label={t('Yopish')}
+          >
+            ×
+          </button>
+          <img src={expandedImage.src} alt={expandedImage.name} />
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useSiteLanguage } from '../lib/siteLanguage'
 
 const actions = [
   {
@@ -50,8 +51,10 @@ const actions = [
 ]
 
 export default function Dashboard() {
+  const { t } = useSiteLanguage()
+
   return (
-    <main className="admin-home-stage" aria-label="Boshqaruv bo‘limlari">
+    <main className="admin-home-stage" aria-label={t('Boshqaruv bo‘limlari')}>
       <section className="admin-home-grid">
         {actions.map((action) => (
           <Link
@@ -62,7 +65,7 @@ export default function Dashboard() {
             <svg viewBox="0 0 24 24" aria-hidden="true">
               {action.icon}
             </svg>
-            <strong>{action.title}</strong>
+            <strong>{t(action.title)}</strong>
           </Link>
         ))}
       </section>

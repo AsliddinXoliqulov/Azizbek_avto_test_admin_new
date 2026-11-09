@@ -3,6 +3,7 @@ import { PageHeader } from '../App'
 import { useConfirm } from '../components/ConfirmProvider'
 import { Notice } from '../components/Notice'
 import { requireSupabase } from '../lib/supabase'
+import { useSiteLanguage } from '../lib/siteLanguage'
 import { getErrorMessage } from '../lib/types'
 
 const IMAGE_BUCKET = 'pdd-images'
@@ -36,6 +37,7 @@ interface ImportProgress {
 
 export default function BaseImport() {
   const confirm = useConfirm()
+  const { t } = useSiteLanguage()
 
   const [bankFile, setBankFile] = useState<File | null>(null)
   const [bank, setBank] = useState<QuestionBank | null>(null)
@@ -74,17 +76,17 @@ export default function BaseImport() {
 
     try {
       const value: unknown = JSON.parse(await file.text())
-      if (!value || typeof value !== 'object') throw new Error('JSON ildizi obyekt bo‘lishi kerak.')
+      if (!value || typeof value !== 'object') throw new Error(t('JSON ildizi obyekt bo‘lishi kerak.'))
       const parsed = value as Partial<QuestionBank>
       for (const key of ['sections', 'lessons', 'questions', 'orphan_answers'] as const) {
-        if (!Array.isArray(parsed[key])) throw new Error(`JSON ichida "${key}" massivi topilmadi.`)
+        if (!Array.isArray(parsed[key])) throw new Error(t('JSON ichida "{0}" massivi topilmadi.').replace('{0}', key))
       }
       const questions = parsed.questions
       if (!Array.isArray(questions) || !questions.every((question: unknown) =>
         typeof question === 'object' && question !== null &&
         'answers' in question && Array.isArray(question.answers) &&
         'images' in question && Array.isArray(question.images))) {
-        throw new Error('Savollarning answers va images maydonlari massiv bo‘lishi kerak.')
+        throw new Error(t('Savollarning answers va images maydonlari massiv bo‘lishi kerak.'))
       }
       setBank(parsed as QuestionBank)
     } catch (reason) {
@@ -113,8 +115,9 @@ export default function BaseImport() {
       if (queryError) throw queryError
       if (count !== expectedCount) {
         throw new Error(
-          `${table}: ${count ?? 0}/${expectedCount} qator. Avval Supabase SQL Editor’da ` +
-          'Base/question_bank_seed.sql faylini ishga tushiring.',
+          t('{0}: {1}/{2} qator. Avval Supabase SQL Editor’da {3} faylini ishga tushiring.')
+            .replace('{0}', table).replace('{1}', String(count ?? 0)).replace('{2}', String(expectedCount))
+            .replace('{3}', 'Base/question_bank_seed.sql'),
         )
       }
     }
@@ -123,9 +126,10 @@ export default function BaseImport() {
   async function uploadImages() {
     if (!bank || !canUpload) return
     const confirmed = await confirm({
-      title: 'Rasmlarni yuklash',
-      message: `${imageFiles.length} ta rasm Storage’ga yuklanadi. Ma’lumotlar bazasi oldindan SQL seed bilan to‘ldirilgan bo‘lishi kerak. Davom etasizmi?`,
-      confirmLabel: 'Yuklash',
+      title: t('Rasmlarni yuklash'),
+      message: t('{0} ta rasm Storage’ga yuklanadi. Ma’lumotlar bazasi oldindan SQL seed bilan to‘ldirilgan bo‘lishi kerak. Davom etasizmi?')
+        .replace('{0}', String(imageFiles.length)),
+      confirmLabel: t('Yuklash'),
     })
     if (!confirmed) return
 
@@ -168,9 +172,9 @@ export default function BaseImport() {
         () => worker(),
       ))
       if (state.failures.length > 0) {
-        throw new Error(`${state.failures.length} ta rasm yuklanmadi: ${state.failures.slice(0, 5).join(' | ')}`)
+        throw new Error(t('{0} ta rasm yuklanmadi: {1}').replace('{0}', String(state.failures.length)).replace('{1}', state.failures.slice(0, 5).join(' | ')))
       }
-      setSuccess(`${state.completed} ta rasm pdd-images/${IMAGE_FOLDER}/ ichiga yuklandi.`)
+      setSuccess(t('{0} ta rasm pdd-images/{1}/ ichiga yuklandi.').replace('{0}', String(state.completed)).replace('{1}', IMAGE_FOLDER))
     } catch (reason) {
       setError(getErrorMessage(reason))
     } finally {
@@ -189,29 +193,29 @@ export default function BaseImport() {
 
       <div className="base-import-layout">
         <section className="panel-card base-import-step">
-          <h2>1. Savol bankini tekshirish</h2>
-          <p>Base/question_bank.json faylini tanlang. Uni avval <code>generate:base-seed</code> bilan SQL seed fayliga aylantirib, Supabase SQL Editor’da ishga tushiring.</p>
+          <h2>{t('1. Savol bankini tekshirish')}</h2>
+          <p>{t('Base/question_bank.json faylini tanlang. Uni avval generate:base-seed bilan SQL seed fayliga aylantirib, Supabase SQL Editor’da ishga tushiring.')}</p>
           <label className="bulk-file-picker">
             <span className="bulk-file-icon">▤</span>
             <span>
-              <strong>{bankFile?.name || 'question_bank.json faylini tanlang'}</strong>
-              <small>{bank ? `${bank.sections.length} bo‘lim · ${bank.lessons.length} dars · ${bank.questions.length} savol` : 'JSON format'}</small>
+              <strong>{bankFile?.name || t('question_bank.json faylini tanlang')}</strong>
+              <small>{bank ? t('{0} bo‘lim · {1} dars · {2} savol').replace('{0}', String(bank.sections.length)).replace('{1}', String(bank.lessons.length)).replace('{2}', String(bank.questions.length)) : t('JSON format')}</small>
             </span>
-            <span className="button button-quiet button-small">Tanlash</span>
+            <span className="button button-quiet button-small">{t('Tanlash')}</span>
             <input type="file" accept=".json,application/json" onChange={(event) => void selectBank(event.target.files?.[0])} disabled={busy} />
           </label>
         </section>
 
         <section className="panel-card base-import-step">
-          <h2>2. Rasmlarni yuklash</h2>
-          <p>Base/images papkasini tanlang. JSON’dagi barcha mavjud rasm havolalari tekshiriladi.</p>
+          <h2>{t('2. Rasmlarni yuklash')}</h2>
+          <p>{t('Base/images papkasini tanlang. JSON’dagi barcha mavjud rasm havolalari tekshiriladi.')}</p>
           <label className="bulk-file-picker">
             <span className="bulk-file-icon image-icon">▧</span>
             <span>
-              <strong>{imageFiles.length ? `${imageFiles.length} ta rasm tanlandi` : 'Base/images papkasini tanlang'}</strong>
-              <small>{missingImages.length ? `${missingImages.length} ta kerakli rasm topilmadi` : 'PNG, JPG, WEBP yoki GIF'}</small>
+              <strong>{imageFiles.length ? t('{0} ta rasm tanlandi').replace('{0}', String(imageFiles.length)) : t('Base/images papkasini tanlang')}</strong>
+              <small>{missingImages.length ? t('{0} ta kerakli rasm topilmadi').replace('{0}', String(missingImages.length)) : t('PNG, JPG, WEBP yoki GIF')}</small>
             </span>
-            <span className="button button-quiet button-small">Papkani tanlash</span>
+            <span className="button button-quiet button-small">{t('Papkani tanlash')}</span>
             <input
               type="file"
               accept="image/*"
@@ -221,31 +225,31 @@ export default function BaseImport() {
               {...{ webkitdirectory: '', directory: '' }}
             />
           </label>
-          {duplicateNames.length > 0 && <p className="base-import-error">Takrorlangan rasm nomlari: {duplicateNames.slice(0, 8).join(', ')}</p>}
-          {missingImages.length > 0 && <p className="base-import-error">Topilmadi: {missingImages.slice(0, 8).join(', ')}</p>}
+          {duplicateNames.length > 0 && <p className="base-import-error">{t('Takrorlangan rasm nomlari: {0}').replace('{0}', duplicateNames.slice(0, 8).join(', '))}</p>}
+          {missingImages.length > 0 && <p className="base-import-error">{t('Topilmadi: {0}').replace('{0}', missingImages.slice(0, 8).join(', '))}</p>}
         </section>
 
         {bank && (
           <section className="panel-card base-import-summary">
-            <h2>Manba tahlili</h2>
+            <h2>{t('Manba tahlili')}</h2>
             <div className="base-import-metrics">
-              <Metric label="Bo‘lim" value={bank.sections.length} />
-              <Metric label="Dars" value={bank.lessons.length} />
-              <Metric label="Savol" value={bank.questions.length} />
-              <Metric label="Javob" value={bank.questions.reduce((total, question) => total + question.answers.length, 0)} />
-              <Metric label="Rasm havolasi" value={bank.questions.reduce((total, question) => total + question.images.length, 0)} />
-              <Metric label="Orphan javob" value={bank.orphan_answers.length} />
+              <Metric label={t('Bo‘lim')} value={bank.sections.length} />
+              <Metric label={t('Dars')} value={bank.lessons.length} />
+              <Metric label={t('Savol')} value={bank.questions.length} />
+              <Metric label={t('Javob')} value={bank.questions.reduce((total, question) => total + question.answers.length, 0)} />
+              <Metric label={t('Rasm havolasi')} value={bank.questions.reduce((total, question) => total + question.images.length, 0)} />
+              <Metric label={t('Orphan javob')} value={bank.orphan_answers.length} />
             </div>
             <p className="base-import-note">
-              Rasmga havolasi uzilgan savollar va savoli topilmagan javoblar ham bazada saqlanadi.
-              JSON’da yo‘q imtihon variantlari sun’iy yaratilmaydi.
+              {t('Rasmga havolasi uzilgan savollar va savoli topilmagan javoblar ham bazada saqlanadi.')}
+              {' '}{t('JSON’da yo‘q imtihon variantlari sun’iy yaratilmaydi.')}
             </p>
           </section>
         )}
 
         {busy && (
           <section className="panel-card base-import-progress">
-            <strong>Storage’ga yuklanmoqda… {progress.completed}/{progress.total}</strong>
+            <strong>{t('Storage’ga yuklanmoqda… {0}/{1}').replace('{0}', String(progress.completed)).replace('{1}', String(progress.total))}</strong>
             <div className="progress-track">
               <div className="progress-value blue" style={{
                 width: `${progress.total ? Math.round(progress.completed / progress.total * 100) : 0}%`,
@@ -255,7 +259,7 @@ export default function BaseImport() {
         )}
 
         <button className="button button-primary" onClick={() => void uploadImages()} disabled={!canUpload}>
-          {busy ? 'Yuklanmoqda…' : 'Base rasmlarini Supabase’ga yuklash'}
+          {busy ? t('Yuklanmoqda…') : t('Base rasmlarini Supabase’ga yuklash')}
         </button>
       </div>
     </>

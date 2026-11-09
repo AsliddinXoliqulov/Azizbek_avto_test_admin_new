@@ -9,7 +9,9 @@ import { ImageListEditor } from '../components/ImageListEditor'
 import { TranslateButton } from '../components/TranslateButton'
 import { fetchAutoVariantCatalog } from '../lib/autoVariants'
 import type { AutoVariantQuestion } from '../lib/autoVariants'
+import { useSiteLanguage } from '../lib/siteLanguage'
 import { requireSupabase } from '../lib/supabase'
+import { normalizeSearchText } from '../lib/search'
 import type { Bilet, Question } from '../lib/types'
 import {
   getErrorMessage,
@@ -20,10 +22,12 @@ import type { LocalizedText, QuestionLocale } from '../lib/types'
 import { NewQuestionEditor } from './AdminNewQuestions'
 import type { AdminNewQuestion } from './AdminNewQuestions'
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 50
 type QuestionDraft = Omit<Question, 'id' | 'created_at' | 'is_deleted'>
 type QuestionListItem = Question & {
+  global_question_number?: number
   admin_question_id?: number
+  text_i18n?: Partial<LocalizedText>
   lesson_id?: number | null
   section_id?: number | null
   lesson_label?: string
@@ -38,6 +42,20 @@ type QuestionTypeFilter =
   | 'numeric'
   | 'similar'
   | 'ordinary'
+
+function localizedText(
+  value: Partial<LocalizedText> | null | undefined,
+  language: QuestionLocale,
+  fallback = ''
+) {
+  return (
+    value?.[language] ||
+    value?.['uz-Latn'] ||
+    value?.ru ||
+    value?.['uz-Cyrl'] ||
+    fallback
+  )
+}
 
 function truncateFilterLabel(label: string, maxLength = 28) {
   return label.length > maxLength
@@ -71,7 +89,7 @@ function blankQuestion(): QuestionDraft {
     bilet_position: null,
     category_id: null,
     text: '',
-    options: [''],
+    options: ['', ''],
     correct_index: 0,
     image_url: null,
     image_urls: [],
@@ -87,6 +105,7 @@ function blankQuestion(): QuestionDraft {
 }
 
 export default function Questions() {
+  const { t, language } = useSiteLanguage()
   const confirm = useConfirm()
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -132,7 +151,7 @@ export default function Questions() {
     setError('')
     try {
       const client = requireSupabase()
-      const search = appliedQuery.trim()
+      const search = normalizeSearchText(appliedQuery)
       const [baseCountResult, sectionResult, lessonResult, catalog] =
         await Promise.all([
           client
@@ -164,7 +183,6 @@ export default function Questions() {
           .from('questions')
           .select('*')
           .eq('is_deleted', false)
-        if (search) request = request.ilike('text', `%${search}%`)
         const { data, error: baseError } = await request
           .order('bilet_id', { ascending: true, nullsFirst: false })
           .order('bilet_position', { ascending: true, nullsFirst: false })
@@ -191,25 +209,30 @@ export default function Questions() {
       const sectionNames = new Map(
         (sectionResult.data || []).map((section) => [
           section.id,
-          section.name?.['uz-Latn'] ||
-            section.name?.ru ||
-            `Bo‘lim ${section.id}`,
+          localizedText(
+            section.name,
+            language,
+            `${t('Bo‘lim')} ${section.id}`
+          ),
         ])
       )
       const lessonSectionName = (sectionId: number | null) =>
         sectionId === null
-          ? 'Biriktirilmagan'
-          : sectionNames.get(sectionId) || `Bo‘lim ${sectionId}`
+          ? t('Biriktirilmagan')
+          : sectionNames.get(sectionId) || `${t('Bo‘lim')} ${sectionId}`
       const lessonRows = (lessonResult.data || []).map((lesson) => ({
         id: lesson.id,
         section_id: lesson.section_id,
-        title:
-          lesson.title?.['uz-Latn'] || lesson.title?.ru || `Bob ${lesson.id}`,
+        title: localizedText(
+          lesson.title,
+          language,
+          `${t('Bob')} ${lesson.id}`
+        ),
       }))
       const lessonLabels = new Map(
         (lessonResult.data || []).map((lesson) => [
           lesson.id,
-          `${lessonSectionName(lesson.section_id)} · ${lesson.title?.['uz-Latn'] || lesson.title?.ru || `Bob ${lesson.id}`}`,
+          `${lessonSectionName(lesson.section_id)} · ${localizedText(lesson.title, language, `${t('Bob')} ${lesson.id}`)}`,
         ])
       )
       const lessonSections = new Map(
@@ -357,6 +380,10 @@ export default function Questions() {
               (ticketNumber == null ? null : ((baseCount + index) % 20) + 1),
             category_id: null,
             text: String(row.text || ''),
+            text_i18n:
+              row.text_i18n && typeof row.text_i18n === 'object'
+                ? (row.text_i18n as Partial<LocalizedText>)
+                : undefined,
             options: Array.isArray(row.options)
               ? (row.options as string[])
               : [],
@@ -411,21 +438,8 @@ export default function Questions() {
           }
         }
       )
-      const merged = [...enrichedBaseQuestions, ...assignedRows]
-        .filter(
-          (question) =>
-            matchesQuestionType(question, questionTypeFilter) &&
-            (!biletFilter || question.bilet_id === biletFilter) &&
-            (!sectionFilter ||
-              String(question.section_id ?? '') === sectionFilter) &&
-            (!lessonFilter ||
-              String(question.lesson_id ?? '') === lessonFilter) &&
-            (!search ||
-              question.text
-                .toLocaleLowerCase()
-                .includes(search.toLocaleLowerCase()))
-        )
-        .sort((left, right) => {
+      const allQuestions = [...enrichedBaseQuestions, ...assignedRows].sort(
+        (left, right) => {
           const leftTicket =
             allBilets.find(({ id }) => id === left.bilet_id)?.number ??
             Number.MAX_SAFE_INTEGER
@@ -438,17 +452,35 @@ export default function Questions() {
               (right.bilet_position ?? Number.MAX_SAFE_INTEGER) ||
             left.created_at.localeCompare(right.created_at)
           )
-        })
-      setQuestions(merged.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE))
+        }
+      )
+      const numberedQuestions = allQuestions.map((question, index) => ({
+        ...question,
+        global_question_number: index + 1,
+      }))
+      const merged = numberedQuestions
+        .filter(
+          (question) =>
+            matchesQuestionType(question, questionTypeFilter) &&
+            (!biletFilter || question.bilet_id === biletFilter) &&
+            (!sectionFilter ||
+              String(question.section_id ?? '') === sectionFilter) &&
+            (!lessonFilter ||
+              String(question.lesson_id ?? '') === lessonFilter) &&
+            (!search ||
+              normalizeSearchText(question.text).includes(search))
+        )
+      setQuestions(merged)
       setTotal(merged.length)
       setBilets(allBilets)
       setSections(
         (sectionResult.data || []).map((section) => ({
           id: section.id,
-          name:
-            section.name?.['uz-Latn'] ||
-            section.name?.ru ||
-            `Bo‘lim ${section.id}`,
+          name: localizedText(
+            section.name,
+            language,
+            `${t('Bo‘lim')} ${section.id}`
+          ),
         }))
       )
       setLessons(lessonRows)
@@ -460,10 +492,11 @@ export default function Questions() {
   }, [
     biletFilter,
     lessonFilter,
-    page,
     appliedQuery,
     questionTypeFilter,
     sectionFilter,
+    language,
+    t,
   ])
 
   useEffect(() => {
@@ -490,7 +523,7 @@ export default function Questions() {
           .eq('source_question_id', sourceQuestionId)
           .maybeSingle()
         if (fetchError) throw fetchError
-        if (!data) throw new Error('Tahrirlash uchun asosiy savol topilmadi.')
+        if (!data) throw new Error(t('Tahrirlash uchun asosiy savol topilmadi.'))
         setEditing(data as QuestionListItem)
         const nextParams = new URLSearchParams(searchParams)
         nextParams.delete('sourceQuestion')
@@ -499,14 +532,14 @@ export default function Questions() {
         setError(getErrorMessage(reason))
       }
     })()
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, t])
 
   async function softDelete(question: QuestionListItem) {
     const confirmed = await confirm({
-      title: 'Savolni o‘chirish',
+      title: t('Savolni o‘chirish'),
       message:
-        'Savolni o‘chirilgan deb belgilaysizmi? Bu o‘zgarish desktop ilovalarga sync orqali yetib boradi.',
-      confirmLabel: 'O‘chirish',
+        t('Savolni o‘chirilgan deb belgilaysizmi? Bu o‘zgarish desktop ilovalarga sync orqali yetib boradi.'),
+      confirmLabel: t('O‘chirish'),
       danger: true,
     })
     if (!confirmed) return
@@ -556,7 +589,7 @@ export default function Questions() {
         .eq('id', id)
         .maybeSingle()
       if (fetchError) throw fetchError
-      if (!data) throw new Error('Tahrirlash uchun yangi savol topilmadi.')
+      if (!data) throw new Error(t('Tahrirlash uchun yangi savol topilmadi.'))
       setAdminEditing(data as AdminNewQuestion)
     } catch (reason) {
       setError(getErrorMessage(reason))
@@ -565,7 +598,7 @@ export default function Questions() {
 
   const editorLessons = lessons.map((lesson) => ({
     id: lesson.id,
-    label: `${lesson.section_id === null ? 'Biriktirilmagan' : sections.find((section) => section.id === lesson.section_id)?.name || `Bo‘lim ${lesson.section_id}`} · ${lesson.title}`,
+    label: `${lesson.section_id === null ? t('Biriktirilmagan') : sections.find((section) => section.id === lesson.section_id)?.name || `${t('Bo‘lim')} ${lesson.section_id}`} · ${lesson.title}`,
   }))
 
   return (
@@ -578,7 +611,7 @@ export default function Questions() {
             className="button button-primary"
             onClick={() => setAdminEditing(null)}
           >
-            ＋ Savol qo‘shish
+            ＋ {t('Savol qo‘shish')}
           </button>
         }
       />
@@ -587,12 +620,16 @@ export default function Questions() {
         <div className="filter-bar questions-filter-bar">
           <form className="search-field" onSubmit={submitSearch} role="search">
             <input
-              placeholder="Savol matnidan qidirish…"
+              placeholder={t('Savol matnidan qidirish…')}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              aria-label="Savol matnidan qidirish"
+              aria-label={t('Savol matnidan qidirish')}
             />
-            <button type="submit" aria-label="Qidirish" title="Qidirish">
+            <button
+              type="submit"
+              aria-label={t('Qidirish')}
+              title={t('Qidirish')}
+            >
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
@@ -616,14 +653,14 @@ export default function Questions() {
               setPage(0)
               setQuestionTypeFilter(event.target.value as QuestionTypeFilter)
             }}
-            aria-label="Savol turi bo‘yicha filtrlash"
+            aria-label={t('Savol turi bo‘yicha filtrlash')}
           >
-            <option value="">Barcha savollar</option>
-            <option value="new">Yangi</option>
-            <option value="old">Eski</option>
-            <option value="numeric">Raqamli</option>
-            <option value="similar">O‘xshash</option>
-            <option value="ordinary">Oddiy</option>
+            <option value="">{t('Barcha savollar')}</option>
+            <option value="new">{t('Yangi')}</option>
+            <option value="old">{t('Eski')}</option>
+            <option value="numeric">{t('Raqamli')}</option>
+            <option value="similar">{t('O‘xshash')}</option>
+            <option value="ordinary">{t('Oddiy')}</option>
           </select>
           <select
             className="filter-select"
@@ -634,7 +671,7 @@ export default function Questions() {
               setSectionFilter(event.target.value)
             }}
           >
-            <option value="">Barcha bo‘limlar</option>
+            <option value="">{t('Barcha bo‘limlar')}</option>
             {sections.map((section) => (
               <option key={section.id} value={section.id} title={section.name}>
                 {truncateFilterLabel(section.name)}
@@ -649,7 +686,7 @@ export default function Questions() {
               setLessonFilter(event.target.value)
             }}
           >
-            <option value="">Barcha boblar</option>
+            <option value="">{t('Barcha boblar')}</option>
             {lessons
               .filter(
                 (lesson) =>
@@ -669,7 +706,7 @@ export default function Questions() {
               setBiletFilter(event.target.value)
             }}
           >
-            <option value="">Barcha variantlar</option>
+            <option value="">{t('Barcha variantlar')}</option>
             {bilets.map((bilet) => (
               <option key={bilet.id} value={bilet.id}>
                 {bilet.number}-variant
@@ -681,154 +718,157 @@ export default function Questions() {
           <table>
             <thead>
               <tr>
-                <th>SAVOL</th>
-                <th>VARIANT</th>
-                <th>HOLATI</th>
-                <th className="align-right">AMALLAR</th>
+                <th>{t('SAVOL')}</th>
+                <th>{t('VARIANT')}</th>
+                <th>{t('HOLATI')}</th>
+                <th className="align-right">{t('AMALLAR')}</th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && questions.length === 0 ? (
                 <tr>
                   <td className="table-state" colSpan={4}>
-                    Savollar yuklanmoqda…
+                    {t('Savollar yuklanmoqda…')}
                   </td>
                 </tr>
               ) : questions.length === 0 ? (
                 <tr>
                   <td className="table-state" colSpan={4}>
-                    Bu filtr bo‘yicha savol topilmadi.
+                    {t('Bu filtr bo‘yicha savol topilmadi.')}
                   </td>
                 </tr>
               ) : (
-                questions.map((question) => {
-                  const bilet = bilets.find(
-                    (item) => item.id === question.bilet_id
-                  )
-                  const focusKey = question.admin_question_id
-                    ? `admin_new:${question.admin_question_id}`
-                    : question.source_question_id
-                      ? `base:${question.source_question_id}`
-                      : ''
-                  return (
-                    <tr
-                      key={question.id}
-                      data-question-focus={focusKey}
-                      className={
-                        searchParams.get('focus') === focusKey
-                          ? 'question-focus-match'
-                          : undefined
-                      }
-                    >
-                      <td>
-                        <div className="question-cell">
-                          <span className="row-avatar">Q</span>
-                          <span className="truncate">
-                            <strong>{question.text}</strong>
-                            <small>
-                              {question.options?.length || 0} ta javob varianti
-                              {question.is_new ? ' · Yangi' : ''}
-                              {question.is_numeric ? ' · Raqamli' : ''}
-                              {question.is_similar ? ' · O‘xshash' : ''}
-                            </small>
+                questions
+                  .slice(0, (page + 1) * PAGE_SIZE)
+                  .map((question, index) => {
+                    const bilet = bilets.find(
+                      (item) => item.id === question.bilet_id
+                    )
+                    const questionNumber =
+                      question.global_question_number ?? index + 1
+                    const focusKey = question.admin_question_id
+                      ? `admin_new:${question.admin_question_id}`
+                      : question.source_question_id
+                        ? `base:${question.source_question_id}`
+                        : ''
+                    return (
+                      <tr
+                        key={question.id}
+                        data-question-focus={focusKey}
+                        className={
+                          searchParams.get('focus') === focusKey
+                            ? 'question-focus-match'
+                            : undefined
+                        }
+                      >
+                        <td>
+                          <div className="question-cell">
+                            <span className="row-avatar">{questionNumber}</span>
+                            <span className="truncate">
+                              <strong>
+                                {localizedText(question.text_i18n, language) ||
+                                  question.text}
+                              </strong>
+                              <small>
+                                {question.options?.length || 0}{' '}
+                                {t('ta javob varianti')}
+                                {question.is_new ? ` · ${t('Yangi')}` : ''}
+                                {question.is_numeric ? ` · ${t('Raqamli')}` : ''}
+                                {question.is_similar ? ` · ${t('O‘xshash')}` : ''}
+                              </small>
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="cell-primary">
+                            {bilet
+                              ? `${bilet.number}${t('-variant')}${question.bilet_position ? ` · ${question.bilet_position}${t('-savol')}` : ''}`
+                              : t('Variantga kiritilmagan')}
                           </span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="cell-primary">
-                          {bilet
-                            ? `${bilet.number}-variant${question.bilet_position ? ` · ${question.bilet_position}-savol` : ''}`
-                            : 'Variantga kiritilmagan'}
-                        </span>
-                        {question.lesson_label && (
-                          <small className="question-source-label">
-                            {question.lesson_label}
-                          </small>
-                        )}
-                        {question.manual_variant_labels?.map((label) => (
-                          <small className="question-source-label" key={label}>
-                            {label}
-                          </small>
-                        ))}
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${question.status === 'PUBLISHED' ? 'badge-success' : 'badge-warning'}`}
-                        >
-                          <i />
-                          {question.status === 'PUBLISHED'
-                            ? 'Chop etilgan'
-                            : 'Qoralama'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="row-actions">
-                          {!question.admin_question_id &&
-                            question.status === 'DRAFT' && (
+                          {question.lesson_label && (
+                            <small className="question-source-label">
+                              {question.lesson_label}
+                            </small>
+                          )}
+                          {question.manual_variant_labels?.map((label) => (
+                            <small className="question-source-label" key={label}>
+                              {label}
+                            </small>
+                          ))}
+                        </td>
+                        <td>
+                          <span
+                            className={`badge ${question.status === 'PUBLISHED' ? 'badge-success' : 'badge-warning'}`}
+                          >
+                            <i />
+                            {question.status === 'PUBLISHED'
+                              ? t('Chop etilgan')
+                              : t('Qoralama')}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="row-actions">
+                            {!question.admin_question_id &&
+                              question.status === 'DRAFT' && (
+                                <button
+                                  className="text-button success-text"
+                                  onClick={() => void publish(question)}
+                                >
+                                  {t('Nashr')}
+                                </button>
+                              )}
+                            {question.admin_question_id ? (
                               <button
-                                className="text-button success-text"
-                                onClick={() => void publish(question)}
+                                className="icon-button"
+                                title={t('Tahrirlash')}
+                                onClick={() =>
+                                  void editAdminQuestion(
+                                    question.admin_question_id!
+                                  )
+                                }
                               >
-                                Nashr
+                                ✎
+                              </button>
+                            ) : (
+                              <button
+                                className="icon-button"
+                                title={t('Tahrirlash')}
+                                onClick={() => setEditing(question)}
+                              >
+                                ✎
                               </button>
                             )}
-                          {question.admin_question_id ? (
                             <button
-                              className="icon-button"
-                              title="Tahrirlash"
-                              onClick={() =>
-                                void editAdminQuestion(
-                                  question.admin_question_id!
-                                )
-                              }
+                              className="icon-button danger-icon"
+                              title={t('O‘chirish')}
+                              onClick={() => void softDelete(question)}
                             >
-                              ✎
+                              🗑
                             </button>
-                          ) : (
-                            <button
-                              className="icon-button"
-                              title="Tahrirlash"
-                              onClick={() => setEditing(question)}
-                            >
-                              ✎
-                            </button>
-                          )}
-                          <button
-                            className="icon-button danger-icon"
-                            title="O‘chirish"
-                            onClick={() => void softDelete(question)}
-                          >
-                            🗑
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
               )}
             </tbody>
           </table>
         </div>
         <div className="table-footer">
-          <span>{total.toLocaleString()} ta savol</span>
+          <span>
+            {total === 0
+              ? t('0 ta savol')
+              : `${Math.min((page + 1) * PAGE_SIZE, total).toLocaleString()} / ${total.toLocaleString()} ${t('ta savol')}`}
+          </span>
           <div className="pagination">
-            <button
-              className="button button-quiet button-small"
-              onClick={() => setPage((current) => Math.max(0, current - 1))}
-              disabled={page === 0}
-            >
-              ← Oldingi
-            </button>
-            <span>
-              {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-            </span>
-            <button
-              className="button button-quiet button-small"
-              onClick={() => setPage((current) => current + 1)}
-              disabled={(page + 1) * PAGE_SIZE >= total}
-            >
-              Keyingi →
-            </button>
+            {(page + 1) * PAGE_SIZE < total && (
+              <button
+                className="button button-quiet button-small"
+                onClick={() => setPage((current) => current + 1)}
+              >
+                {t('Yana')} {Math.min(PAGE_SIZE, total - (page + 1) * PAGE_SIZE)} {t('ta')}
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -879,6 +919,7 @@ function QuestionEditor({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t } = useSiteLanguage()
   const [draft, setDraft] = useState<QuestionDraft>(() => {
     if (!question) return blankQuestion()
     const options = [...question.options]
@@ -954,12 +995,12 @@ function QuestionEditor({
     event.preventDefault()
     const options = draft.options.map((option) => option.trim()).filter(Boolean)
     if (options.length < 2) {
-      setError('Kamida ikkita javob variantini to‘ldiring.')
+      setError(t('Kamida ikkita javob variantini to‘ldiring.'))
       return
     }
     if (!draft.options[draft.correct_index]?.trim()) {
       setError(
-        'To‘g‘ri javob sifatida bo‘sh variant tanlangan. Avval uni to‘ldiring.'
+        t('To‘g‘ri javob sifatida bo‘sh variant tanlangan. Avval uni to‘ldiring.')
       )
       return
     }
@@ -994,39 +1035,52 @@ function QuestionEditor({
 
   return (
     <Modal
-      title={question ? 'Savolni tahrirlash' : 'Yangi savol'}
+      className="question-editor-modal"
+      title={question ? t('Savolni tahrirlash') : t('Yangi savol')}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
-      submitLabel={question ? 'O‘zgarishlarni saqlash' : 'Savol yaratish'}
+      submitLabel={
+        question ? t('O‘zgarishlarni saqlash') : t('Savol yaratish')
+      }
     >
       {error && <Notice message={error} />}
-      <label className="field">
-        <span>Savol matni *</span>
-        <textarea
-          rows={3}
-          value={draft.text}
-          onChange={(event) => update('text', event.target.value)}
-          required
+      <div className="question-editor-prompt-row">
+        <label className="field question-editor-prompt">
+          <span>{t('Savol matni')} *</span>
+          <textarea
+            rows={3}
+            value={draft.text}
+            onChange={(event) => update('text', event.target.value)}
+            required
+          />
+        </label>
+        <ImageListEditor
+          label={t('Savol rasmlari')}
+          images={draft.image_urls}
+          busy={busy}
+          maxImages={1}
+          onChange={(images) => update('image_urls', images)}
+          onUpload={(files) => uploadImages(files, 'image_urls')}
         />
-      </label>
-      <div className="form-grid">
+      </div>
+      <div className="form-grid question-editor-meta">
         <label className="field">
-          <span>Bilet</span>
+          <span>{t('Bilet')}</span>
           <select
             value={draft.bilet_id || ''}
             onChange={(event) => update('bilet_id', event.target.value || null)}
           >
-            <option value="">Biletsiz</option>
+            <option value="">{t('Biletsiz')}</option>
             {bilets.map((bilet) => (
               <option key={bilet.id} value={bilet.id}>
-                {bilet.number}-bilet
+                {bilet.number}{t('-bilet')}
               </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span>Biletdagi tartib</span>
+          <span>{t('Biletdagi tartib')}</span>
           <input
             type="number"
             min="1"
@@ -1041,24 +1095,23 @@ function QuestionEditor({
           />
         </label>
         <label className="field">
-          <span>Holati</span>
+          <span>{t('Holati')}</span>
           <select
             value={draft.status}
             onChange={(event) =>
               update('status', event.target.value as QuestionDraft['status'])
             }
           >
-            <option value="DRAFT">Qoralama</option>
-            <option value="PUBLISHED">Chop etilgan</option>
+            <option value="DRAFT">{t('Qoralama')}</option>
+            <option value="PUBLISHED">{t('Chop etilgan')}</option>
           </select>
         </label>
       </div>
-      <div className="field">
-        <span>Javob variantlari *</span>
+      <div className="field question-editor-answers">
+        <span>{t('Javob variantlari')} *</span>
         <div className="option-editor">
           {draft.options.map((option, index) => {
-            const label =
-              index < 26 ? String.fromCharCode(65 + index) : String(index + 1)
+            const label = `F${index + 1}`
             return (
               <label
                 className={`option-input${draft.correct_index === index ? ' correct-option' : ''}`}
@@ -1073,7 +1126,7 @@ function QuestionEditor({
                 <b>{label}</b>
                 <input
                   value={option}
-                  placeholder={`${label} javob`}
+                  placeholder={`${label} ${t('javob')}`}
                   onChange={(event) =>
                     update(
                       'options',
@@ -1092,35 +1145,29 @@ function QuestionEditor({
           className="button button-quiet button-small option-add"
           onClick={() => update('options', [...draft.options, ''])}
         >
-          ＋ Variant qo‘shish
+          ＋ {t('Variant qo‘shish')}
         </button>
       </div>
-      <ImageListEditor
-        label="Savol rasmlari"
-        images={draft.image_urls}
-        busy={busy}
-        maxImages={1}
-        onChange={(images) => update('image_urls', images)}
-        onUpload={(files) => uploadImages(files, 'image_urls')}
-      />
-      <label className="field">
-        <span>Tushuntirish / shpargalka</span>
-        <textarea
-          rows={2}
-          value={draft.explanation || ''}
-          onChange={(event) =>
-            update('explanation', event.target.value || null)
-          }
+      <div className="question-editor-explanation-row">
+        <label className="field">
+          <span>{t('Tushuntirish / shpargalka')}</span>
+          <textarea
+            rows={2}
+            value={draft.explanation || ''}
+            onChange={(event) =>
+              update('explanation', event.target.value || null)
+            }
+          />
+        </label>
+        <ImageListEditor
+          label={t('Tushuntirish rasmlari')}
+          images={draft.explanation_image_urls}
+          busy={busy}
+          maxImages={1}
+          onChange={(images) => update('explanation_image_urls', images)}
+          onUpload={(files) => uploadImages(files, 'explanation_image_urls')}
         />
-      </label>
-      <ImageListEditor
-        label="Tushuntirish rasmlari"
-        images={draft.explanation_image_urls}
-        busy={busy}
-        maxImages={1}
-        onChange={(images) => update('explanation_image_urls', images)}
-        onUpload={(files) => uploadImages(files, 'explanation_image_urls')}
-      />
+      </div>
     </Modal>
   )
 }
@@ -1218,6 +1265,7 @@ function BaseQuestionEditor({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t, language } = useSiteLanguage()
   const [draft, setDraft] = useState<CanonicalQuestionDraft>(() => ({
     lesson_id: null,
     text: asLocalized(null, question.text),
@@ -1396,7 +1444,7 @@ function BaseQuestionEditor({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (QUESTION_LOCALES.some((key) => !draft.text[key].trim())) {
-      setError('Savol matnini uchala tilda ham to‘ldiring.')
+      setError(t('Savol matnini uchala tilda ham to‘ldiring.'))
       return
     }
     if (
@@ -1405,7 +1453,7 @@ function BaseQuestionEditor({
         QUESTION_LOCALES.some((key) => !option[key].trim())
       )
     ) {
-      setError('Kamida ikkita javob variantini uchala tilda ham to‘ldiring.')
+      setError(t('Kamida ikkita javob variantini uchala tilda ham to‘ldiring.'))
       return
     }
     const questionImagePaths = draft.image_urls.map((url) =>
@@ -1418,7 +1466,7 @@ function BaseQuestionEditor({
       [...questionImagePaths, ...explanationImagePaths].some((path) => !path)
     ) {
       setError(
-        'Rasmni pdd-images omboriga yuklang yoki shu ombordagi rasm URL manzilini kiriting.'
+        t('Rasmni pdd-images omboriga yuklang yoki shu ombordagi rasm URL manzilini kiriting.')
       )
       return
     }
@@ -1551,19 +1599,20 @@ function BaseQuestionEditor({
 
   return (
     <Modal
-      title="Savolni tahrirlash"
+      className="question-editor-modal"
+      title={t('Savolni tahrirlash')}
       onClose={onClose}
       onSubmit={submit}
       busy={busy || loading}
-      submitLabel="O‘zgarishlarni saqlash"
+      submitLabel={t('O‘zgarishlarni saqlash')}
     >
       {error && <Notice message={error} />}
       {loading ? (
-        <div className="table-state">Savol yuklanmoqda…</div>
+        <div className="table-state">{t('Savol yuklanmoqda…')}</div>
       ) : (
         <>
           <label className="field">
-            <span>Darsga biriktirish</span>
+            <span>{t('Darsga biriktirish')}</span>
             <select
               value={draft.lesson_id ?? ''}
               onChange={(event) =>
@@ -1573,16 +1622,20 @@ function BaseQuestionEditor({
                 )
               }
             >
-              <option value="">Dars tanlanmagan</option>
+              <option value="">{t('Dars tanlanmagan')}</option>
               {lessons.map((lesson) => (
                 <option key={lesson.id} value={lesson.id}>
-                  {lesson.section_name['uz-Latn'] ||
-                    lesson.section_name.ru ||
-                    'Bo‘lim'}{' '}
+                  {localizedText(
+                    lesson.section_name,
+                    language,
+                    t('Bo‘lim')
+                  )}{' '}
                   ·{' '}
-                  {lesson.title['uz-Latn'] ||
-                    lesson.title.ru ||
-                    `Dars ${lesson.id}`}
+                  {localizedText(
+                    lesson.title,
+                    language,
+                    `${t('Dars')} ${lesson.id}`
+                  )}
                 </option>
               ))}
             </select>
@@ -1594,7 +1647,7 @@ function BaseQuestionEditor({
                 checked={draft.is_new}
                 onChange={(event) => update('is_new', event.target.checked)}
               />{' '}
-              Yangi savol
+              {t('Yangi savol')}
             </label>
             <label>
               <input
@@ -1602,7 +1655,7 @@ function BaseQuestionEditor({
                 checked={draft.is_numeric}
                 onChange={(event) => update('is_numeric', event.target.checked)}
               />{' '}
-              Raqamli savol
+              {t('Raqamli savol')}
             </label>
             <label>
               <input
@@ -1610,10 +1663,14 @@ function BaseQuestionEditor({
                 checked={draft.is_similar}
                 onChange={(event) => update('is_similar', event.target.checked)}
               />{' '}
-              O‘xshash savollar to‘plamiga qo‘shish
+              {t('O‘xshash savollar')}
             </label>
           </div>
-          <div className="language-tabs" role="tablist" aria-label="Savol tili">
+          <div
+            className="language-tabs"
+            role="tablist"
+            aria-label={t('Savol tili')}
+          >
             {QUESTION_LOCALES.map((key) => (
               <button
                 key={key}
@@ -1628,7 +1685,9 @@ function BaseQuestionEditor({
             ))}
           </div>
           <label className="field">
-            <span>Savol matni · {QUESTION_LOCALE_LABELS[locale]}</span>
+            <span>
+              {t('Savol matni')} · {QUESTION_LOCALE_LABELS[locale]}
+            </span>
             <textarea
               rows={3}
               value={draft.text[locale]}
@@ -1649,7 +1708,7 @@ function BaseQuestionEditor({
           />
           <div className="field">
             <span>
-              Javoblar (to‘g‘ri javobni belgilang) ·{' '}
+              {t('Javoblar (to‘g‘ri javobni belgilang)')} ·{' '}
               {QUESTION_LOCALE_LABELS[locale]}
             </span>
             <div className="option-editor">
@@ -1701,7 +1760,7 @@ function BaseQuestionEditor({
                     <button
                       type="button"
                       className="icon-button danger-icon option-remove"
-                      title="Javobni olib tashlash"
+                      title={t('Javobni olib tashlash')}
                       disabled={draft.options.length <= 2}
                       onClick={() => {
                         const next = draft.options.filter(
@@ -1727,47 +1786,60 @@ function BaseQuestionEditor({
                 update('options', [...draft.options, blankLocalized()])
               }
             >
-              ＋ Javob qo‘shish
+              ＋ {t('Javob qo‘shish')}
             </button>
           </div>
           <ImageListEditor
-            label="Savol rasmlari"
+            label={t('Savol rasmlari')}
             images={draft.image_urls}
             busy={busy}
             maxImages={1}
             onChange={(images) => update('image_urls', images)}
             onUpload={(files) => uploadImages(files, 'image_urls')}
           />
-          <label className="field">
-            <span>Tushuntirish · {QUESTION_LOCALE_LABELS[locale]}</span>
-            <textarea
-              rows={2}
-              value={draft.explanation[locale]}
-              onChange={(event) =>
-                update('explanation', {
-                  ...draft.explanation,
-                  [locale]: event.target.value,
-                })
+          <div className="question-editor-explanation-row">
+            <div className="question-editor-explanation">
+              <label className="field">
+                <div className="question-editor-prompt-label-row">
+                  <span>
+                    {t('Tushuntirish')} · {QUESTION_LOCALE_LABELS[locale]}
+                  </span>
+                  <TranslateButton
+                    sourceText={draft.explanation['uz-Latn']}
+                    onTranslated={(translations) =>
+                      setDraft((current) => ({
+                        ...current,
+                        explanation: {
+                          ...current.explanation,
+                          ...translations,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+                <textarea
+                  rows={2}
+                  value={draft.explanation[locale]}
+                  onChange={(event) =>
+                    update('explanation', {
+                      ...draft.explanation,
+                      [locale]: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <ImageListEditor
+              label={t('Tushuntirish rasmlari')}
+              images={draft.explanation_image_urls}
+              busy={busy}
+              maxImages={1}
+              onChange={(images) => update('explanation_image_urls', images)}
+              onUpload={(files) =>
+                uploadImages(files, 'explanation_image_urls')
               }
             />
-          </label>
-          <TranslateButton
-            sourceText={draft.explanation['uz-Latn']}
-            onTranslated={(translations) =>
-              setDraft((current) => ({
-                ...current,
-                explanation: { ...current.explanation, ...translations },
-              }))
-            }
-          />
-          <ImageListEditor
-            label="Tushuntirish rasmlari"
-            images={draft.explanation_image_urls}
-            busy={busy}
-            maxImages={1}
-            onChange={(images) => update('explanation_image_urls', images)}
-            onUpload={(files) => uploadImages(files, 'explanation_image_urls')}
-          />
+          </div>
         </>
       )}
     </Modal>

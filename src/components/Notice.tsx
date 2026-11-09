@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useSiteLanguage } from '../lib/siteLanguage'
 
 interface NoticeProps {
   message: string
@@ -21,6 +22,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 export function Notice({ message, kind = 'error', onClose }: NoticeProps) {
+  const { t } = useSiteLanguage()
   const toastTarget = useContext(ToastTargetContext)
 
   useEffect(() => {
@@ -31,8 +33,8 @@ export function Notice({ message, kind = 'error', onClose }: NoticeProps) {
 
   const notice = (
     <div className={`notice notice-${kind}`} role={kind === 'error' ? 'alert' : 'status'}>
-      <span>{message}</span>
-      {onClose && <button className="notice-close" type="button" onClick={onClose} aria-label="Yopish">×</button>}
+      <span>{t(message)}</span>
+      {onClose && <button className="notice-close" type="button" onClick={onClose} aria-label={t('Yopish')}>×</button>}
     </div>
   )
 

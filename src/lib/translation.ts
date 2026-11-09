@@ -72,6 +72,20 @@ function splitForTranslation(text: string, limit = 450): { text: string; separat
   return chunks
 }
 
+function normalizeRussianSource(text: string): string {
+  return text
+    .replace(/\\(['"’‘ʻʼ`])/g, '$1')
+    .replace(/[ʻʼ‘’`]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeHtmlEntities(text: string): string {
+  const decoder = document.createElement('textarea')
+  decoder.innerHTML = text
+  return decoder.value
+}
+
 async function translateChunkToRussian(text: string): Promise<string> {
   const url = new URL('https://api.mymemory.translated.net/get')
   url.searchParams.set('q', text)
@@ -88,14 +102,15 @@ async function translateChunkToRussian(text: string): Promise<string> {
   if (result.responseStatus !== 200 || !translated) {
     throw new Error(result.responseDetails || 'Ruscha tarjimani olib bo‘lmadi.')
   }
-  return translated
+  return decodeHtmlEntities(translated)
 }
 
 export async function translateUzbekLatin(text: string): Promise<UzbekTranslations> {
   const source = text.trim()
   if (!source) throw new Error('Avval o‘zbekcha (lotin) matnini kiriting.')
 
-  const chunks = splitForTranslation(source)
+  const russianSource = normalizeRussianSource(source)
+  const chunks = splitForTranslation(russianSource)
   const russian: string[] = []
   for (const chunk of chunks) {
     russian.push(await translateChunkToRussian(chunk.text))
@@ -104,6 +119,6 @@ export async function translateUzbekLatin(text: string): Promise<UzbekTranslatio
 
   return {
     'uz-Cyrl': transliterateUzbekToCyrillic(source),
-    ru: russian.join(''),
+    ru: russian.join('').replace(/\s+/g, ' ').trim(),
   }
 }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../App'
 import { useConfirm } from '../components/ConfirmProvider'
 import { Modal } from '../components/Modal'
 import { Notice } from '../components/Notice'
 import { TranslateButton } from '../components/TranslateButton'
+import { useSiteLanguage } from '../lib/siteLanguage'
+import { normalizeSearchText } from '../lib/search'
 import { requireSupabase } from '../lib/supabase'
 import type {
   BaseLesson,
@@ -31,22 +33,43 @@ function localizedText(
   }
 }
 
-function sectionName(section: BaseSection, index: number) {
+function localizedTextForLanguage(
+  value: Partial<LocalizedText> | null | undefined,
+  language: 'uz-Latn' | 'uz-Cyrl' | 'ru'
+) {
+  const preferred = value?.[language]
+  if (preferred?.trim()) return preferred
+  for (const fallback of ['uz-Latn', 'uz-Cyrl', 'ru'] as const) {
+    const text = value?.[fallback]
+    if (text?.trim()) return text
+  }
+  return ''
+}
+
+function sectionName(
+  section: BaseSection,
+  index: number,
+  language: 'uz-Latn' | 'uz-Cyrl' | 'ru',
+  t: (text: string) => string
+) {
   const name = localizedText(section.name)
-  const automatic =
-    /^\d+\s*[-–]\s*bo[’‘ʻ']?lim$/i.test(name['uz-Latn'].trim()) ||
-    /^\d+\s*[-–]\s*бўлим$/i.test(name['uz-Cyrl'].trim()) ||
-    /^раздел\s+\d+$/i.test(name.ru.trim())
-  return automatic
-    ? `${index + 1}-bo‘lim`
-    : name['uz-Latn'] || name.ru || `Bo‘lim ${index + 1}`
+  return (
+    localizedTextForLanguage(name, language) ||
+    `${t('Bo‘lim')} ${index + 1}`
+  )
 }
 
 export default function Categories() {
+  const { language, t } = useSiteLanguage()
   const confirm = useConfirm()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [sections, setSections] = useState<BaseSection[]>([])
   const [lessons, setLessons] = useState<BaseLesson[]>([])
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get('search') || ''
+  )
+  const [sectionFilter, setSectionFilter] = useState('')
   const [questionCounts, setQuestionCounts] = useState<Record<number, number>>(
     {}
   )
@@ -54,6 +77,31 @@ export default function Categories() {
   const [deletingTopicId, setDeletingTopicId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  useEffect(() => {
+    setSearchQuery(searchParams.get('search') || '')
+  }, [searchParams])
+
+  const normalizedSearch = normalizeSearchText(searchQuery)
+  const filteredLessons = lessons.filter((lesson) => {
+    if (sectionFilter === 'unassigned' && lesson.section_id !== null)
+      return false
+    if (
+      sectionFilter &&
+      sectionFilter !== 'unassigned' &&
+      String(lesson.section_id) !== sectionFilter
+    )
+      return false
+    if (!normalizedSearch) return true
+
+    const section = sections.find((item) => item.id === lesson.section_id)
+    const searchableText = [
+      ...Object.values(lesson.title || {}),
+      ...Object.values(section?.name || {}),
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+    return normalizeSearchText(searchableText).includes(normalizedSearch)
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -135,10 +183,10 @@ export default function Categories() {
 
   async function removeTopic(lesson: BaseLesson) {
     const confirmed = await confirm({
-      title: 'Mavzuni o‘chirish',
+      title: t('Mavzuni o‘chirish'),
       message:
-        'Mavzu o‘chiriladi va unga bog‘langan savollar mavzudan ajratiladi. Savollar bazadan o‘chirilmaydi.',
-      confirmLabel: 'O‘chirish',
+        t('Mavzu o‘chiriladi va unga bog‘langan savollar mavzudan ajratiladi. Savollar bazadan o‘chirilmaydi.'),
+      confirmLabel: t('O‘chirish'),
       danger: true,
     })
     if (!confirmed) return
@@ -175,10 +223,10 @@ export default function Categories() {
 
   async function permanentlyDeleteTopic(lesson: BaseLesson) {
     const confirmed = await confirm({
-      title: 'Mavzuni butunlay o‘chirish',
+      title: t('Mavzuni butunlay o‘chirish'),
       message:
-        'Bu amalni ortga qaytarib bo‘lmaydi. Mavzuga biriktirilgan savollar saqlanadi, lekin mavzudan ajratiladi. Davom etasizmi?',
-      confirmLabel: 'Butunlay o‘chirish',
+        t('Bu amalni ortga qaytarib bo‘lmaydi. Mavzuga biriktirilgan savollar saqlanadi, lekin mavzudan ajratiladi. Davom etasizmi?'),
+      confirmLabel: t('Butunlay o‘chirish'),
       danger: true,
     })
     if (!confirmed) return
@@ -193,7 +241,7 @@ export default function Categories() {
       )
       if (deleteError) throw deleteError
       if (!data) {
-        throw new Error('Mavzu topilmadi yoki uni o‘chirishga ruxsat yo‘q.')
+        throw new Error(t('Mavzu topilmadi yoki uni o‘chirishga ruxsat yo‘q.'))
       }
       await load()
     } catch (reason) {
@@ -213,42 +261,74 @@ export default function Categories() {
             className="button button-primary"
             onClick={() => setTopicDraft({ lesson: null })}
           >
-            ＋ Mavzu qo‘shish
+            ＋ {t('Mavzu qo‘shish')}
           </button>
         }
       />
       {error && <Notice message={error} onClose={() => setError('')} />}
       <section className="panel-card table-panel">
-        <div className="filter-bar">
-          <strong className="topic-list-heading">Mavzular ro‘yxati</strong>
-          <span className="count-pill">{lessons.length} ta mavzu</span>
+        <div className="filter-bar categories-filter-bar">
+          <strong className="topic-list-heading">{t('Mavzular ro‘yxati')}</strong>
+          <span className="count-pill">
+            {t('Mavzular:')} {filteredLessons.length}
+          </span>
+          <label className="search-field categories-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              placeholder={t('Mavzu yoki bo‘lim nomidan qidirish…')}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              aria-label={t('Mavzu yoki bo‘lim nomidan qidirish')}
+            />
+          </label>
+          <select
+            className="filter-select categories-section-filter"
+            value={sectionFilter}
+            onChange={(event) => setSectionFilter(event.target.value)}
+            aria-label={t('Bo‘lim bo‘yicha filtrlash')}
+          >
+            <option value="">{t('Barcha bo‘limlar')}</option>
+            <option value="unassigned">{t('Biriktirilmagan')}</option>
+            {sections.map((section, index) => (
+              <option key={section.id} value={section.id}>
+                {sectionName(section, index, language, t)}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>MAVZU</th>
-                <th>BO‘LIM</th>
-                <th>HOLATI</th>
-                <th>SAVOLLAR</th>
-                <th className="align-right">AMALLAR</th>
+                <th>{t('MAVZU')}</th>
+                <th>{t('BO‘LIM')}</th>
+                <th>{t('HOLATI')}</th>
+                <th>{t('SAVOLLAR')}</th>
+                <th className="align-right">{t('AMALLAR')}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
                   <td className="table-state" colSpan={5}>
-                    Mavzular yuklanmoqda…
+                    {t('Mavzular yuklanmoqda…')}
                   </td>
                 </tr>
               ) : lessons.length === 0 ? (
                 <tr>
                   <td className="table-state" colSpan={5}>
-                    Mavzular hali qo‘shilmagan.
+                    {t('Mavzular hali qo‘shilmagan.')}
+                  </td>
+                </tr>
+              ) : filteredLessons.length === 0 ? (
+                <tr>
+                  <td className="table-state" colSpan={5}>
+                    {t('Filtr bo‘yicha mavzu topilmadi.')}
                   </td>
                 </tr>
               ) : (
-                lessons.map((lesson) => {
+                filteredLessons.map((lesson) => {
                   const sectionIndex = sections.findIndex(
                     (section) => section.id === lesson.section_id
                   )
@@ -257,38 +337,38 @@ export default function Categories() {
                     <tr key={lesson.id}>
                       <td>
                         {lesson.is_deleted ? (
-                          lesson.title['uz-Latn'] ||
-                          lesson.title.ru ||
-                          'Nomsiz mavzu'
+                          localizedTextForLanguage(lesson.title, language) ||
+                          t('Nomsiz mavzu')
                         ) : (
                           <button
                             className="topic-name-button"
                             type="button"
                             onClick={() => openTopicQuestions(lesson)}
                           >
-                            {lesson.title['uz-Latn'] ||
-                              lesson.title.ru ||
-                              'Nomsiz mavzu'}
+                            {localizedTextForLanguage(lesson.title, language) ||
+                              t('Nomsiz mavzu')}
                           </button>
                         )}
                       </td>
                       <td>
                         {lesson.section_id === null
-                          ? 'Biriktirilmagan'
+                          ? t('Biriktirilmagan')
                           : section
-                            ? sectionName(section, sectionIndex)
-                            : 'Bo‘lim topilmadi'}
+                            ? sectionName(section, sectionIndex, language, t)
+                            : t('Bo‘lim topilmadi')}
                       </td>
                       <td>
                         {lesson.is_deleted
-                          ? 'O‘chirilgan'
+                          ? t('O‘chirilgan')
                           : lesson.section_id === null
-                            ? 'Biriktirilmagan'
-                            : 'Faol'}
+                            ? t('Biriktirilmagan')
+                            : t('Faol')}
                       </td>
                       <td>
                         <strong>{questionCounts[lesson.id] || 0}</strong>{' '}
-                        <span className="muted">ta savol</span>
+                        <span className="muted">
+                          {t('Savollar:')} {questionCounts[lesson.id] || 0}
+                        </span>
                       </td>
                       <td>
                         <div className="row-actions">
@@ -298,8 +378,8 @@ export default function Categories() {
                             onClick={() => setTopicDraft({ lesson })}
                           >
                             {lesson.is_deleted || lesson.section_id === null
-                              ? 'Bo‘limga biriktirish'
-                              : 'Tahrirlash'}
+                              ? t('Bo‘limga biriktirish')
+                              : t('Tahrirlash')}
                           </button>
                           {!lesson.is_deleted && (
                             <>
@@ -308,7 +388,7 @@ export default function Categories() {
                                 type="button"
                                 onClick={() => openTopicQuestions(lesson)}
                               >
-                                Savollar
+                                {t('Savollar')}
                               </button>
                               <button
                                 className="button button-danger button-small"
@@ -316,7 +396,7 @@ export default function Categories() {
                                 disabled={deletingTopicId === lesson.id}
                                 onClick={() => void removeTopic(lesson)}
                               >
-                                O‘chirish
+                                {t('O‘chirish')}
                               </button>
                             </>
                           )}
@@ -327,8 +407,8 @@ export default function Categories() {
                             onClick={() => void permanentlyDeleteTopic(lesson)}
                           >
                             {deletingTopicId === lesson.id
-                              ? 'O‘chirilmoqda…'
-                              : 'Butunlay o‘chirish'}
+                              ? t('O‘chirilmoqda…')
+                              : t('Butunlay o‘chirish')}
                           </button>
                         </div>
                       </td>
@@ -367,6 +447,7 @@ function TopicEditor({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { language, t } = useSiteLanguage()
   const [title, setTitle] = useState<LocalizedText>(() =>
     localizedText(lesson?.title)
   )
@@ -387,12 +468,12 @@ function TopicEditor({
     event.preventDefault()
     if (QUESTION_LOCALES.some((key) => !title[key].trim())) {
       setError(
-        'Mavzu nomini uchala tilda kiriting yoki avtomatik tarjimadan foydalaning.'
+        t('Mavzu nomini uchala tilda kiriting yoki avtomatik tarjimadan foydalaning.')
       )
       return
     }
     if (!sectionId) {
-      setError('Mavzu uchun bo‘limni tanlang.')
+      setError(t('Mavzu uchun bo‘limni tanlang.'))
       return
     }
     setBusy(true)
@@ -435,32 +516,32 @@ function TopicEditor({
 
   return (
     <Modal
-      title={lesson ? 'Mavzuni tahrirlash' : 'Yangi mavzu'}
+      title={lesson ? t('Mavzuni tahrirlash') : t('Yangi mavzu')}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
       submitDisabled={sections.length === 0}
-      submitLabel={lesson ? 'Saqlash' : 'Mavzu qo‘shish'}
+      submitLabel={lesson ? t('Saqlash') : t('Mavzu qo‘shish')}
     >
       {error && <Notice message={error} />}
       {sections.length === 0 ? (
-        <p className="muted">Avval “Darslar” bo‘limida bo‘lim yarating.</p>
+        <p className="muted">{t('Avval “Darslar” bo‘limida bo‘lim yarating.')}</p>
       ) : (
         <>
           <label className="field">
-            <span>Mavzu qaysi bo‘limga tegishli?</span>
+            <span>{t('Mavzu qaysi bo‘limga tegishli?')}</span>
             <select
               value={sectionId}
               onChange={(event) => setSectionId(event.target.value)}
             >
               {sections.map((section, index) => (
                 <option key={section.id} value={section.id}>
-                  {sectionName(section, index)}
+                  {sectionName(section, index, language, t)}
                 </option>
               ))}
             </select>
           </label>
-          <div className="language-tabs" role="tablist" aria-label="Mavzu tili">
+          <div className="language-tabs" role="tablist" aria-label={t('Mavzu tili')}>
             {QUESTION_LOCALES.map((key) => (
               <button
                 key={key}
@@ -475,7 +556,7 @@ function TopicEditor({
             ))}
           </div>
           <label className="field">
-            <span>Mavzu nomi · {QUESTION_LOCALE_LABELS[locale]}</span>
+            <span>{t('Mavzu nomi')} · {QUESTION_LOCALE_LABELS[locale]}</span>
             <input
               value={title[locale]}
               onChange={(event) =>
