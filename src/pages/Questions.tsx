@@ -1611,36 +1611,36 @@ function BaseQuestionEditor({
         <div className="table-state">{t('Savol yuklanmoqda…')}</div>
       ) : (
         <>
-          <label className="field">
-            <span>{t('Darsga biriktirish')}</span>
-            <select
-              value={draft.lesson_id ?? ''}
-              onChange={(event) =>
-                update(
-                  'lesson_id',
-                  event.target.value ? Number(event.target.value) : null
-                )
-              }
-            >
-              <option value="">{t('Dars tanlanmagan')}</option>
-              {lessons.map((lesson) => (
-                <option key={lesson.id} value={lesson.id}>
-                  {localizedText(
-                    lesson.section_name,
-                    language,
-                    t('Bo‘lim')
-                  )}{' '}
-                  ·{' '}
-                  {localizedText(
-                    lesson.title,
-                    language,
-                    `${t('Dars')} ${lesson.id}`
-                  )}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="checkbox-grid classification-grid">
+          <div className="question-editor-assignment-row">
+            <label className="field">
+              <span>{t('Darsga biriktirish')}</span>
+              <select
+                value={draft.lesson_id ?? ''}
+                onChange={(event) =>
+                  update(
+                    'lesson_id',
+                    event.target.value ? Number(event.target.value) : null
+                  )
+                }
+              >
+                <option value="">{t('Dars tanlanmagan')}</option>
+                {lessons.map((lesson) => (
+                  <option key={lesson.id} value={lesson.id}>
+                    {localizedText(
+                      lesson.section_name,
+                      language,
+                      t('Bo‘lim')
+                    )}{' '}
+                    ·{' '}
+                    {localizedText(
+                      lesson.title,
+                      language,
+                      `${t('Dars')} ${lesson.id}`
+                    )}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label>
               <input
                 type="checkbox"
@@ -1684,29 +1684,46 @@ function BaseQuestionEditor({
               </button>
             ))}
           </div>
-          <label className="field">
-            <span>
-              {t('Savol matni')} · {QUESTION_LOCALE_LABELS[locale]}
-            </span>
-            <textarea
-              rows={3}
-              value={draft.text[locale]}
-              onChange={(event) =>
-                update('text', { ...draft.text, [locale]: event.target.value })
-              }
-              required
+          <div className="question-editor-prompt-row">
+            <div className="question-editor-localized-prompt">
+              <label className="field">
+                <div className="question-editor-prompt-label-row">
+                  <span>
+                    {t('Savol matni')} · {QUESTION_LOCALE_LABELS[locale]}
+                  </span>
+                  <TranslateButton
+                    sourceText={draft.text['uz-Latn']}
+                    onTranslated={(translations) =>
+                      setDraft((current) => ({
+                        ...current,
+                        text: { ...current.text, ...translations },
+                      }))
+                    }
+                  />
+                </div>
+                <textarea
+                  rows={3}
+                  value={draft.text[locale]}
+                  onChange={(event) =>
+                    update('text', {
+                      ...draft.text,
+                      [locale]: event.target.value,
+                    })
+                  }
+                  required
+                />
+              </label>
+            </div>
+            <ImageListEditor
+              label={t('Savol rasmlari')}
+              images={draft.image_urls}
+              busy={busy}
+              maxImages={1}
+              onChange={(images) => update('image_urls', images)}
+              onUpload={(files) => uploadImages(files, 'image_urls')}
             />
-          </label>
-          <TranslateButton
-            sourceText={draft.text['uz-Latn']}
-            onTranslated={(translations) =>
-              setDraft((current) => ({
-                ...current,
-                text: { ...current.text, ...translations },
-              }))
-            }
-          />
-          <div className="field">
+          </div>
+          <div className="field question-editor-answers">
             <span>
               {t('Javoblar (to‘g‘ri javobni belgilang)')} ·{' '}
               {QUESTION_LOCALE_LABELS[locale]}
@@ -1789,15 +1806,7 @@ function BaseQuestionEditor({
               ＋ {t('Javob qo‘shish')}
             </button>
           </div>
-          <ImageListEditor
-            label={t('Savol rasmlari')}
-            images={draft.image_urls}
-            busy={busy}
-            maxImages={1}
-            onChange={(images) => update('image_urls', images)}
-            onUpload={(files) => uploadImages(files, 'image_urls')}
-          />
-          <div className="question-editor-explanation-row">
+          <div className="question-editor-detail-grid question-editor-explanation-row">
             <div className="question-editor-explanation">
               <label className="field">
                 <div className="question-editor-prompt-label-row">
