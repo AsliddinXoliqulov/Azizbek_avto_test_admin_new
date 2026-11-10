@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { cleanOsonPravaWatermark } from '../lib/cleanOsonPravaWatermark'
 import { useSiteLanguage } from '../lib/siteLanguage'
 
 export function ImageListEditor({
@@ -19,8 +18,8 @@ export function ImageListEditor({
 }) {
   const { t } = useSiteLanguage()
   const [url, setUrl] = useState('')
-  const [processing, setProcessing] = useState(false)
-  const [processingError, setProcessingError] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
   const [expandedImage, setExpandedImage] = useState<{
     src: string
     name: string
@@ -37,25 +36,21 @@ export function ImageListEditor({
   }, [expandedImage])
 
   async function uploadFiles(files: File[]) {
-    setProcessing(true)
-    setProcessingError('')
+    setUploading(true)
+    setUploadError('')
     try {
-      const uploadFiles: File[] = []
-      for (const file of files) {
-        uploadFiles.push(await cleanOsonPravaWatermark(file))
-      }
-      await onUpload(uploadFiles)
+      await onUpload(files)
     } catch (reason) {
-      setProcessingError(
-        t(reason instanceof Error ? reason.message : 'Rasmni qayta ishlab bo‘lmadi.')
+      setUploadError(
+        t(reason instanceof Error ? reason.message : 'Rasmni yuklab bo‘lmadi.')
       )
     } finally {
-      setProcessing(false)
+      setUploading(false)
     }
   }
 
   function pasteImage(event: React.ClipboardEvent<HTMLDivElement>) {
-    if (busy || processing || !canAddImage) return
+    if (busy || uploading || !canAddImage) return
     const files = Array.from(event.clipboardData.items)
       .filter((item) => item.type.startsWith('image/'))
       .map((item, index) => {
@@ -83,8 +78,8 @@ export function ImageListEditor({
   return (
     <div className="field image-list-editor" onPaste={pasteImage} tabIndex={0}>
       <span>{t(label)}</span>
-      {processing && <small className="field-hint">{t('Rasm tekshirilmoqda…')}</small>}
-      {processingError && <small className="field-hint image-processing-error">{t(processingError)}</small>}
+      {uploading && <small className="field-hint">{t('Rasm yuklanmoqda…')}</small>}
+      {uploadError && <small className="field-hint image-upload-error">{t(uploadError)}</small>}
       {images.length > 0 && (
         <div className={`image-list${maxImages === 1 ? ' image-list-single' : ''}`}>
           {images.map((image, index) => {
@@ -153,7 +148,7 @@ export function ImageListEditor({
             type="file"
             accept="image/*"
             multiple={maxImages == null || maxImages > 1}
-            disabled={busy || processing}
+            disabled={busy || uploading}
             onChange={(event) => {
               const files = Array.from(event.currentTarget.files || [])
                 .slice(0, maxImages == null ? undefined : maxImages - images.length)

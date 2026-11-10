@@ -1499,20 +1499,7 @@ th:last-child {
 .image-list-editor {
   gap: calc(8px * var(--admin-ui-font-scale, 1));
 }
-.image-watermark-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: calc(7px * var(--admin-ui-font-scale, 1));
-  color: var(--ink);
-  font-size: calc((10px) * var(--admin-ui-font-scale, 1));
-  line-height: 1.45;
-}
-.image-watermark-toggle input {
-  flex: 0 0 auto;
-  margin: 2px 0 0;
-  accent-color: var(--blue);
-}
-.image-processing-error {
+.image-upload-error {
   color: #fb7185;
 }
 .image-list {
