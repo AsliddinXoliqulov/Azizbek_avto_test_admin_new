@@ -21,12 +21,7 @@ import type { AdminProfile } from './lib/types'
 import { getErrorMessage } from './lib/types'
 import { useSiteLanguage } from './lib/siteLanguage'
 import type { SiteLanguage } from './lib/siteLanguage'
-import {
-  consumePwaInstallPrompt,
-  isPwaInstalled,
-  markPwaInstalled,
-  subscribeToPwaInstall,
-} from './lib/pwaInstall'
+import PwaInstallButton from './components/PwaInstallButton'
 import { Notice, ToastProvider } from './components/Notice'
 import Dashboard from './pages/Dashboard'
 import Questions from './pages/Questions'
@@ -83,23 +78,56 @@ const siteLanguageOptions: { value: SiteLanguage; label: string }[] = [
 
 function SiteLanguageSwitcher({ className = '' }: { className?: string }) {
   const { language, setLanguage, t } = useSiteLanguage()
+  const [compact, setCompact] = useState(() =>
+    window.matchMedia('(max-width: 620px)').matches
+  )
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 620px)')
+    const updateCompact = () => setCompact(media.matches)
+    media.addEventListener('change', updateCompact)
+    return () => media.removeEventListener('change', updateCompact)
+  }, [])
+
+  function cycleLanguage() {
+    const currentIndex = siteLanguageOptions.findIndex(
+      (option) => option.value === language
+    )
+    setLanguage(siteLanguageOptions[(currentIndex + 1) % siteLanguageOptions.length].value)
+  }
+
+  const currentLanguage =
+    siteLanguageOptions.find((option) => option.value === language) ??
+    siteLanguageOptions[0]
+
   return (
     <div
       className={`site-language-switch ${className}`.trim()}
       role="group"
       aria-label={t('Sayt tili')}
     >
-      {siteLanguageOptions.map(({ value, label }) => (
+      {compact ? (
         <button
           type="button"
-          key={value}
-          className={language === value ? 'is-selected' : ''}
-          aria-pressed={language === value}
-          onClick={() => setLanguage(value)}
+          className="is-selected"
+          aria-label={`${t('Sayt tili')}: ${currentLanguage.label}`}
+          onClick={cycleLanguage}
         >
-          {label}
+          {currentLanguage.label}
         </button>
-      ))}
+      ) : (
+        siteLanguageOptions.map(({ value, label }) => (
+          <button
+            type="button"
+            key={value}
+            className={language === value ? 'is-selected' : ''}
+            aria-pressed={language === value}
+            onClick={() => setLanguage(value)}
+          >
+            {label}
+          </button>
+        ))
+      )}
     </div>
   )
 }
@@ -227,6 +255,7 @@ function Login() {
                 : t('Login va parol bilan kirish')}
           </button>
         </form>
+        <PwaInstallButton variant="login" />
       </section>
     </main>
   )
@@ -246,8 +275,6 @@ function AdminLayout({
   const [signingOut, setSigningOut] = useState(false)
   const [backHandler, setBackHandler] = useState<(() => void) | null>(null)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
-  const [installHelp, setInstallHelp] = useState('')
-  const [appInstalled, setAppInstalled] = useState(() => isPwaInstalled())
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     localStorage.getItem('admin-theme') === 'light' ? 'light' : 'dark'
@@ -270,16 +297,6 @@ function AdminLayout({
 
   const registerBackHandler = useCallback((handler: (() => void) | null) => {
     setBackHandler(() => handler)
-  }, [])
-
-  useEffect(() => {
-    const syncInstallState = () => {
-      setAppInstalled(isPwaInstalled())
-      if (isPwaInstalled()) setInstallHelp('')
-    }
-    syncInstallState()
-    const unsubscribe = subscribeToPwaInstall(syncInstallState)
-    return () => unsubscribe()
   }, [])
 
   useEffect(() => {
@@ -326,30 +343,6 @@ function AdminLayout({
     else navigate('/')
   }
 
-  async function installApp() {
-    setInstallHelp('')
-    const prompt = consumePwaInstallPrompt()
-    if (!prompt) {
-      setInstallHelp(
-        'Brauzer menyusidan “Ilovani o‘rnatish” yoki “Bosh ekranga qo‘shish” bandini tanlang.'
-      )
-      return
-    }
-    try {
-      await prompt.prompt()
-      const { outcome } = await prompt.userChoice
-      if (outcome === 'accepted') {
-        markPwaInstalled()
-        setAppInstalled(true)
-      }
-    } catch (error) {
-      console.error('PWA ilovasini o‘rnatib bo‘lmadi:', error)
-      setInstallHelp(
-        'Ilovani o‘rnatib bo‘lmadi. Brauzer menyusidan qayta urinib ko‘ring.'
-      )
-    }
-  }
-
   async function signOut() {
     setSigningOut(true)
     setSignOutError('')
@@ -387,6 +380,9 @@ function AdminLayout({
               title={t('Bosh sahifa')}
               aria-label={t('Bosh sahifa')}
             >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />
+              </svg>
               <span>{t('Bosh menu')}</span>
             </Link>
             <button
@@ -401,32 +397,9 @@ function AdminLayout({
               </svg>
               <span>{t('Orqaga')}</span>
             </button>
-            <SiteLanguageSwitcher />
-            <button
-              type="button"
-              className="theme-toggle-button"
-              onClick={() =>
-                setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
-              }
-              title={t(theme === 'dark' ? 'Kunduzgi rejim' : 'Tungi rejim')}
-              aria-label={
-                theme === 'dark'
-                  ? t('Kunduzgi rejimga o‘tish')
-                  : t('Tungi rejimga o‘tish')
-              }
-            >
-              {theme === 'dark' ? (
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
-                </svg>
-              )}
-            </button>
             <div className="admin-topbar-actions">
+              <SiteLanguageSwitcher />
+              <PwaInstallButton />
               <div className="profile-menu-wrap" ref={profileMenuRef}>
                 <button
                   type="button"
@@ -482,23 +455,6 @@ function AdminLayout({
                         <path d="m9 18 6-6-6-6" />
                       </svg>
                     </Link>
-                    {!appInstalled && (
-                      <button
-                        type="button"
-                        className="profile-dropdown-action profile-install-action"
-                        onClick={() => void installApp()}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M12 3v12m-5-5 5 5 5-5M5 17v3h14v-3" />
-                        </svg>
-                        <span>{t('Ilovani o‘rnatish')}</span>
-                      </button>
-                    )}
-                    {installHelp && (
-                      <p className="profile-dropdown-error profile-install-help">
-                        {t(installHelp)}
-                      </p>
-                    )}
                     <button
                       type="button"
                       className="profile-dropdown-action profile-theme-action"

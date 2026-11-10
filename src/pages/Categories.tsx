@@ -181,46 +181,6 @@ export default function Categories() {
     navigate(`/chapters?lessonId=${lesson.id}`)
   }
 
-  async function removeTopic(lesson: BaseLesson) {
-    const confirmed = await confirm({
-      title: t('Mavzuni o‘chirish'),
-      message:
-        t('Mavzu o‘chiriladi va unga bog‘langan savollar mavzudan ajratiladi. Savollar bazadan o‘chirilmaydi.'),
-      confirmLabel: t('O‘chirish'),
-      danger: true,
-    })
-    if (!confirmed) return
-    try {
-      const client = requireSupabase()
-      const { error: baseError } = await client
-        .from('base_questions')
-        .update({
-          lesson_id: null,
-          pending_lesson_id: null,
-          pending_unassigned_at: null,
-        })
-        .eq('lesson_id', lesson.id)
-      if (baseError) throw baseError
-      const { error: adminError } = await client
-        .from('admin_new_questions')
-        .update({
-          lesson_id: null,
-          pending_lesson_id: null,
-          pending_unassigned_at: null,
-        })
-        .eq('lesson_id', lesson.id)
-      if (adminError) throw adminError
-      const { error: lessonError } = await client
-        .from('base_lessons')
-        .update({ is_deleted: true })
-        .eq('id', lesson.id)
-      if (lessonError) throw lessonError
-      await load()
-    } catch (reason) {
-      setError(getErrorMessage(reason))
-    }
-  }
-
   async function permanentlyDeleteTopic(lesson: BaseLesson) {
     const confirmed = await confirm({
       title: t('Mavzuni butunlay o‘chirish'),
@@ -303,7 +263,6 @@ export default function Categories() {
               <tr>
                 <th>{t('MAVZU')}</th>
                 <th>{t('BO‘LIM')}</th>
-                <th>{t('HOLATI')}</th>
                 <th>{t('SAVOLLAR')}</th>
                 <th className="align-right">{t('AMALLAR')}</th>
               </tr>
@@ -311,19 +270,19 @@ export default function Categories() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td className="table-state" colSpan={5}>
+                  <td className="table-state" colSpan={4}>
                     {t('Mavzular yuklanmoqda…')}
                   </td>
                 </tr>
               ) : lessons.length === 0 ? (
                 <tr>
-                  <td className="table-state" colSpan={5}>
+                  <td className="table-state" colSpan={4}>
                     {t('Mavzular hali qo‘shilmagan.')}
                   </td>
                 </tr>
               ) : filteredLessons.length === 0 ? (
                 <tr>
-                  <td className="table-state" colSpan={5}>
+                  <td className="table-state" colSpan={4}>
                     {t('Filtr bo‘yicha mavzu topilmadi.')}
                   </td>
                 </tr>
@@ -332,7 +291,6 @@ export default function Categories() {
                   const sectionIndex = sections.findIndex(
                     (section) => section.id === lesson.section_id
                   )
-                  const section = sections[sectionIndex]
                   return (
                     <tr key={lesson.id}>
                       <td>
@@ -351,64 +309,75 @@ export default function Categories() {
                         )}
                       </td>
                       <td>
-                        {lesson.section_id === null
-                          ? t('Biriktirilmagan')
-                          : section
-                            ? sectionName(section, sectionIndex, language, t)
-                            : t('Bo‘lim topilmadi')}
+                        {sectionIndex < 0 ? '—' : sectionIndex + 1}
                       </td>
                       <td>
-                        {lesson.is_deleted
-                          ? t('O‘chirilgan')
-                          : lesson.section_id === null
-                            ? t('Biriktirilmagan')
-                            : t('Faol')}
-                      </td>
-                      <td>
-                        <strong>{questionCounts[lesson.id] || 0}</strong>{' '}
-                        <span className="muted">
-                          {t('Savollar:')} {questionCounts[lesson.id] || 0}
-                        </span>
+                        <strong>{questionCounts[lesson.id] || 0}</strong>
                       </td>
                       <td>
                         <div className="row-actions">
                           <button
-                            className="button button-quiet button-small"
+                            className={
+                              lesson.is_deleted || lesson.section_id === null
+                                ? 'button button-quiet button-small'
+                                : 'icon-button topic-action-button'
+                            }
                             type="button"
+                            title={
+                              lesson.is_deleted || lesson.section_id === null
+                                ? t('Bo‘limga biriktirish')
+                                : t('Tahrirlash')
+                            }
+                            aria-label={
+                              lesson.is_deleted || lesson.section_id === null
+                                ? t('Bo‘limga biriktirish')
+                                : t('Tahrirlash')
+                            }
                             onClick={() => setTopicDraft({ lesson })}
                           >
                             {lesson.is_deleted || lesson.section_id === null
                               ? t('Bo‘limga biriktirish')
-                              : t('Tahrirlash')}
+                              : (
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="m14 5 5 5M4 20l4.5-1 10.8-10.8a2.1 2.1 0 0 0-3-3L5.5 16 4 20Z" />
+                                </svg>
+                              )}
                           </button>
                           {!lesson.is_deleted && (
                             <>
                               <button
-                                className="button button-quiet button-small"
+                                className="icon-button topic-action-button"
                                 type="button"
+                                title={t('Savollar')}
+                                aria-label={t('Savollar')}
                                 onClick={() => openTopicQuestions(lesson)}
                               >
-                                {t('Savollar')}
-                              </button>
-                              <button
-                                className="button button-danger button-small"
-                                type="button"
-                                disabled={deletingTopicId === lesson.id}
-                                onClick={() => void removeTopic(lesson)}
-                              >
-                                {t('O‘chirish')}
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <circle cx="12" cy="12" r="9" />
+                                  <path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1 .9-1.8 1.2-1.8 2.7M12 17h.01" />
+                                </svg>
                               </button>
                             </>
                           )}
                           <button
-                            className="button button-danger-quiet button-small"
+                            className="icon-button topic-action-button danger-icon"
                             type="button"
+                            title={
+                              deletingTopicId === lesson.id
+                                ? t('O‘chirilmoqda…')
+                                : t('Butunlay o‘chirish')
+                            }
+                            aria-label={
+                              deletingTopicId === lesson.id
+                                ? t('O‘chirilmoqda…')
+                                : t('Butunlay o‘chirish')
+                            }
                             disabled={deletingTopicId === lesson.id}
                             onClick={() => void permanentlyDeleteTopic(lesson)}
                           >
-                            {deletingTopicId === lesson.id
-                              ? t('O‘chirilmoqda…')
-                              : t('Butunlay o‘chirish')}
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M4 7h16M10 11v6m4-6v6M5 7l1 14h12l1-14M9 7V4h6v3" />
+                            </svg>
                           </button>
                         </div>
                       </td>

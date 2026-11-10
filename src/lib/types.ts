@@ -106,7 +106,6 @@ export interface ActivationToken {
   device_id: string | null
   activated_at: string | null
   created_by: string | null
-  validity_days?: 0 | 15
 }
 
 export interface AdminListItem extends AdminProfile {

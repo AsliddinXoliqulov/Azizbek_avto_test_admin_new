@@ -14,7 +14,10 @@ export default function Codes() {
   const { t, language } = useSiteLanguage()
 
   const [tokens, setTokens] = useState<ActivationToken[]>([])
+  const [platform, setPlatform] = useState<'desktop' | 'website'>('desktop')
   const [filter, setFilter] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -26,14 +29,16 @@ export default function Codes() {
     setError('')
     try {
       const client = requireSupabase()
-      const { error: expireError } = await client.rpc('expire_stale_tokens')
+      const website = platform === 'website'
+      const { error: expireError } = await client.rpc(
+        website ? 'expire_stale_web_activation_tokens' : 'expire_stale_tokens',
+      )
       if (expireError) throw expireError
-      let request = client.from('activation_tokens')
-        .select('id,code,note,status,created_at,expires_at,device_id,activated_at,created_by,validity_days')
+      let request = client.from(website ? 'web_activation_tokens' : 'activation_tokens')
+        .select('id,code,note,status,created_at,expires_at,device_id,activated_at,created_by')
         .order('created_at', { ascending: false })
         .limit(200)
-      if (filter === '15_DAY') request = request.eq('validity_days', 15)
-      else if (filter) request = request.eq('status', filter)
+      if (filter) request = request.eq('status', filter)
       const { data, error: tokenError } = await request
       if (tokenError) throw tokenError
       setTokens((data || []) as ActivationToken[])
@@ -42,9 +47,87 @@ export default function Codes() {
     } finally {
       setLoading(false)
     }
-  }, [filter])
+  }, [filter, platform])
 
   useEffect(() => { void load() }, [load])
+
+  const selectedTokens = tokens.filter((token) => selectedIds.has(token.id))
+  const revocableTokens = selectedTokens.filter((token) => ['PENDING', 'ACTIVATED'].includes(token.status))
+  const revokedTokens = selectedTokens.filter((token) => token.status === 'REVOKED')
+
+  function toggleToken(tokenId: string, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (checked) next.add(tokenId)
+      else next.delete(tokenId)
+      return next
+    })
+  }
+
+  function toggleAllTokens(checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      for (const token of tokens) {
+        if (checked) next.add(token.id)
+        else next.delete(token.id)
+      }
+      return next
+    })
+  }
+
+  async function bulkAction(action: 'revoke' | 'reactivate' | 'delete') {
+    const targets = action === 'revoke' ? revocableTokens : revokedTokens
+    if (!targets.length || bulkBusy) return
+
+    const actionLabel = action === 'revoke'
+      ? t('Bekor qilish')
+      : action === 'reactivate'
+        ? t('Qayta faollashtirish')
+        : t('Butunlay o‘chirish')
+    const confirmed = await confirm({
+      title: actionLabel,
+      message: t('Tanlangan {0} ta kod uchun “{1}” amalini bajarasizmi?')
+        .replace('{0}', String(targets.length))
+        .replace('{1}', actionLabel),
+      confirmLabel: actionLabel,
+      danger: action !== 'reactivate',
+    })
+    if (!confirmed) return
+
+    setBulkBusy(true)
+    setError('')
+    setSuccess('')
+    let completed = 0
+    const failures: string[] = []
+    const rpcName = action === 'revoke'
+      ? platform === 'website' ? 'revoke_web_activation_code' : 'revoke_activation_code'
+      : action === 'reactivate'
+        ? platform === 'website' ? 'reactivate_revoked_web_activation_code' : 'reactivate_revoked_activation_code'
+        : platform === 'website' ? 'delete_revoked_web_activation_code' : 'delete_revoked_activation_code'
+
+    try {
+      const client = requireSupabase()
+      for (const token of targets) {
+        const { error: rpcError } = await client.rpc(rpcName, { p_id: token.id })
+        if (rpcError) failures.push(`${token.code}: ${getErrorMessage(rpcError)}`)
+        else completed += 1
+      }
+      setSelectedIds(new Set())
+      await load()
+      if (completed) {
+        setSuccess(t('{0} ta kodga “{1}” amali bajarildi.').replace('{0}', String(completed)).replace('{1}', actionLabel))
+      }
+      if (failures.length) {
+        setError(t('{0} ta kodni o‘zgartirib bo‘lmadi: {1}')
+          .replace('{0}', String(failures.length))
+          .replace('{1}', failures.join('; ')))
+      }
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   async function copyCode(token: ActivationToken) {
     try {
@@ -65,7 +148,10 @@ export default function Codes() {
     })
     if (!confirmed) return
     try {
-      const { error: revokeError } = await requireSupabase().rpc('revoke_activation_code', { p_id: token.id })
+      const { error: revokeError } = await requireSupabase().rpc(
+        platform === 'website' ? 'revoke_web_activation_code' : 'revoke_activation_code',
+        { p_id: token.id },
+      )
       if (revokeError) throw revokeError
       setSuccess(t('{0} kodi bekor qilindi.').replace('{0}', token.code))
       await load()
@@ -79,14 +165,20 @@ export default function Codes() {
       title: t('Kodni qayta faollashtirish'),
       message: token.device_id
         ? t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi va faqat avval ulangan qurilmada ishlaydi ({2}…).')
-          .replace('{0}', token.code).replace('{1}', t(token.validity_days === 15 ? '15 kun' : '1 soat')).replace('{2}', token.device_id.slice(0, 10))
+          .replace('{0}', token.code)
+          .replace('{1}', t(platform === 'website' ? '15 kun' : '1 soat'))
+          .replace('{2}', token.device_id.slice(0, 10))
         : t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi; bu kod avval qurilmaga ulanmagan.')
-          .replace('{0}', token.code).replace('{1}', t(token.validity_days === 15 ? '15 kun' : '1 soat')),
+          .replace('{0}', token.code)
+          .replace('{1}', t(platform === 'website' ? '15 kun' : '1 soat')),
       confirmLabel: t('Qayta faollashtirish'),
     })
     if (!confirmed) return
     try {
-      const { error: rpcError } = await requireSupabase().rpc('reactivate_revoked_activation_code', { p_id: token.id })
+      const { error: rpcError } = await requireSupabase().rpc(
+        platform === 'website' ? 'reactivate_revoked_web_activation_code' : 'reactivate_revoked_activation_code',
+        { p_id: token.id },
+      )
       if (rpcError) throw rpcError
       setSuccess(t('{0} kodi qayta faollashtirildi.').replace('{0}', token.code))
       await load()
@@ -104,7 +196,10 @@ export default function Codes() {
     })
     if (!confirmed) return
     try {
-      const { error: rpcError } = await requireSupabase().rpc('delete_revoked_activation_code', { p_id: token.id })
+      const { error: rpcError } = await requireSupabase().rpc(
+        platform === 'website' ? 'delete_revoked_web_activation_code' : 'delete_revoked_activation_code',
+        { p_id: token.id },
+      )
       if (rpcError) throw rpcError
       setSuccess(t('{0} kodi bazadan butunlay o‘chirildi.').replace('{0}', token.code))
       await load()
@@ -115,23 +210,82 @@ export default function Codes() {
 
   return (
     <>
-      <PageHeader title="Aktivatsiya kodlari" description="Desktop ilovalar uchun odatiy yoki 15 kun ichida ishlatiladigan kodlarni yarating va boshqaring." action={<button className="button button-primary" onClick={() => setShowCreate(true)}>{t('＋ Kod yaratish')}</button>} />
+      <PageHeader
+        title="Aktivatsiya kodlari"
+        description="Desktop ilova va sayt uchun alohida aktivatsiya kodlarini yarating va boshqaring."
+        action={
+          <div className="page-action-group activation-code-actions">
+            <button
+              className="button button-primary"
+              onClick={() => setShowCreate(true)}
+            >
+              {t('＋ Kod yaratish')}
+            </button>
+            <button
+              className="button button-quiet"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {t('↻ Yangilash')}
+            </button>
+          </div>
+        }
+      />
       {error && <Notice message={error} onClose={() => setError('')} />}
       {success && <Notice message={success} kind="success" onClose={() => setSuccess('')} />}
       <section className="panel-card table-panel">
         <div className="filter-bar">
           <div className="filter-tabs">
-            <button className={!filter ? 'selected' : ''} onClick={() => setFilter('')}>{t('Barchasi')}</button>
-            {['PENDING', 'ACTIVATED', 'EXPIRED', 'REVOKED'].map((status) => <button key={status} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>{statusLabel(status, t)}</button>)}
-            <button className={filter === '15_DAY' ? 'selected' : ''} onClick={() => setFilter('15_DAY')}>{t('15 kunlik')}</button>
+            <button className={platform === 'desktop' ? 'selected' : ''} onClick={() => { setPlatform('desktop'); setFilter(''); setSelectedIds(new Set()) }}>{t('Desktop ilova')}</button>
+            <button className={platform === 'website' ? 'selected' : ''} onClick={() => { setPlatform('website'); setFilter(''); setSelectedIds(new Set()) }}>{t('Sayt')}</button>
           </div>
-          <button className="button button-quiet button-small" onClick={() => void load()} disabled={loading}>{t('↻ Yangilash')}</button>
+          <select
+            className="filter-select"
+            aria-label={t('Aktivatsiya kodlarini filtrlash')}
+            value={filter}
+            onChange={(event) => { setFilter(event.target.value); setSelectedIds(new Set()) }}
+          >
+            <option value="">{t('Barchasi')}</option>
+            <option value="ACTIVATED">{statusLabel('ACTIVATED', t)}</option>
+            <option value="REVOKED">{statusLabel('REVOKED', t)}</option>
+          </select>
+          {selectedTokens.length > 0 && (
+            <details className="bulk-code-menu">
+              <summary aria-label={t('Tanlangan kodlar amallari')} title={t('Amallar')}>
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="4" r="1.5" />
+                  <circle cx="10" cy="10" r="1.5" />
+                  <circle cx="10" cy="16" r="1.5" />
+                </svg>
+              </summary>
+              <div className="bulk-code-menu-options">
+                {revocableTokens.length > 0 && (
+                  <button className="danger-text" disabled={bulkBusy} onClick={() => void bulkAction('revoke')}>
+                    {t('Bekor qilish')} ({revocableTokens.length})
+                  </button>
+                )}
+                {revokedTokens.length > 0 && (
+                  <>
+                    <button disabled={bulkBusy} onClick={() => void bulkAction('reactivate')}>
+                      {t('Qayta faollashtirish')} ({revokedTokens.length})
+                    </button>
+                    <button className="danger-text" disabled={bulkBusy} onClick={() => void bulkAction('delete')}>
+                      {t('Butunlay o‘chirish')} ({revokedTokens.length})
+                    </button>
+                  </>
+                )}
+              </div>
+            </details>
+          )}
         </div>
-        <div className="table-scroll"><table><thead><tr><th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t('QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
-          {loading ? <tr><td className="table-state" colSpan={6}>{t('Kodlar yuklanmoqda…')}</td></tr>
-            : tokens.length === 0 ? <tr><td className="table-state" colSpan={6}>{t('Kodlar topilmadi.')}</td></tr>
+        <div className="table-scroll"><table><thead><tr>
+          <th><input type="checkbox" aria-label={t('Barcha kodlarni tanlash')} checked={tokens.length > 0 && tokens.every((token) => selectedIds.has(token.id))} onChange={(event) => toggleAllTokens(event.target.checked)} /></th>
+          <th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t('QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
+          {loading ? <tr><td className="table-state" colSpan={7}>{t('Kodlar yuklanmoqda…')}</td></tr>
+            : tokens.length === 0 ? <tr><td className="table-state" colSpan={7}>{t('Kodlar topilmadi.')}</td></tr>
               : tokens.map((token) => <tr key={token.id}>
-                <td><div className={`token-cell${token.validity_days === 15 ? ' token-cell-fifteen-day' : ''}`}><div className="token-code"><code>{token.code}</code><button className="icon-button" type="button" onClick={() => void copyCode(token)} title={t(copiedTokenId === token.id ? 'Nusxalandi' : 'Kodni nusxalash')} aria-label={t('{0} kodini nusxalash').replace('{0}', token.code)}>{copiedTokenId === token.id ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3.2 3.2L13 4.5" /></svg> : <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2.5" width="8" height="10" rx="1.5" /><path d="M10.5 13.5v.2a1.3 1.3 0 0 1-1.3 1.3H3.3A1.3 1.3 0 0 1 2 13.7V6.3A1.3 1.3 0 0 1 3.3 5h.2" /></svg>}</button></div><small>{token.note || t('Izoh kiritilmagan')}</small></div></td>
+                <td><input type="checkbox" aria-label={t('{0} kodini tanlash').replace('{0}', token.code)} checked={selectedIds.has(token.id)} onChange={(event) => toggleToken(token.id, event.target.checked)} /></td>
+                <td><div className="token-cell"><div className="token-code"><code>{token.code}</code><button className="icon-button" type="button" onClick={() => void copyCode(token)} title={t(copiedTokenId === token.id ? 'Nusxalandi' : 'Kodni nusxalash')} aria-label={t('{0} kodini nusxalash').replace('{0}', token.code)}>{copiedTokenId === token.id ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3.2 3.2L13 4.5" /></svg> : <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2.5" width="8" height="10" rx="1.5" /><path d="M10.5 13.5v.2a1.3 1.3 0 0 1-1.3 1.3H3.3A1.3 1.3 0 0 1 2 13.7V6.3A1.3 1.3 0 0 1 3.3 5h.2" /></svg>}</button></div><small>{token.note || t('Izoh kiritilmagan')}</small></div></td>
                 <td><span className={`badge ${token.status === 'ACTIVATED' ? 'badge-success' : token.status === 'PENDING' ? 'badge-warning' : 'badge-neutral'}`}><i />{statusLabel(token.status, t)}</span></td>
                 <td>{formatDate(token.created_at, language)}</td><td>{formatDate(token.expires_at, language)}</td>
                 <td><span className="device-id">{token.device_id ? `${token.device_id.slice(0, 10)}…` : '—'}</span></td>
@@ -139,7 +293,7 @@ export default function Codes() {
                   {token.status === 'REVOKED' && (
                     <button className="text-button" onClick={() => void reactivate(token)}>{t('Qayta faollashtirish')}</button>
                   )}
-                  {['EXPIRED', 'REVOKED'].includes(token.status)
+                  {token.status === 'REVOKED'
                     ? <button
                       className="icon-button danger-icon"
                       type="button"
@@ -157,15 +311,14 @@ export default function Codes() {
         </tbody></table></div>
         <div className="table-footer"><span>{t('Oxirgi 200 tagacha kod ko‘rsatiladi')}</span></div>
       </section>
-      {showCreate && <CreateCode onClose={() => setShowCreate(false)} onCreated={(code) => { setShowCreate(false); setSuccess(t('Yangi aktivatsiya kodi: {0}').replace('{0}', code)); void load() }} />}
+      {showCreate && <CreateCode platform={platform} onClose={() => setShowCreate(false)} onCreated={(code) => { setShowCreate(false); setSuccess(t('Yangi aktivatsiya kodi: {0}').replace('{0}', code)); void load() }} />}
     </>
   )
 }
 
-function CreateCode({ onClose, onCreated }: { onClose: () => void; onCreated: (code: string) => void }) {
+function CreateCode({ platform, onClose, onCreated }: { platform: 'desktop' | 'website'; onClose: () => void; onCreated: (code: string) => void }) {
   const { t } = useSiteLanguage()
   const [note, setNote] = useState('')
-  const [fifteenDayCode, setFifteenDayCode] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -174,10 +327,9 @@ function CreateCode({ onClose, onCreated }: { onClose: () => void; onCreated: (c
     setBusy(true)
     setError('')
     try {
-      const { data, error: rpcError } = await requireSupabase().rpc('generate_activation_code', {
-        p_note: note.trim() || null,
-        p_validity_days: fifteenDayCode ? 15 : 0,
-      })
+      const { data, error: rpcError } = platform === 'website'
+        ? await requireSupabase().rpc('generate_web_activation_code', { p_note: note.trim() || null })
+        : await requireSupabase().rpc('generate_activation_code', { p_note: note.trim() || null })
       if (rpcError) throw rpcError
       const token = Array.isArray(data) ? data[0] : data
       if (!token?.code) throw new Error(t('Server kod yaratdi, ammo javobda kod topilmadi.'))
@@ -189,15 +341,14 @@ function CreateCode({ onClose, onCreated }: { onClose: () => void; onCreated: (c
     }
   }
 
-  return <Modal title={t('Aktivatsiya kodi yaratish')} onClose={onClose} onSubmit={submit} busy={busy} submitLabel={t('Kod yaratish')}>
+  return <Modal title={platform === 'website' ? t('Sayt uchun 15 kunlik aktivatsiya kodi') : t('Desktop ilova uchun aktivatsiya kodi')} onClose={onClose} onSubmit={submit} busy={busy} submitLabel={t('Kod yaratish')}>
     {error && <Notice message={error} />}
     <label className="field"><span>{t('Izoh (ixtiyoriy)')}</span><input value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('Ism yoki telefon raqami')} /></label>
-    <div className="checkbox-grid classification-grid"><label><input type="checkbox" checked={fifteenDayCode} onChange={(event) => setFifteenDayCode(event.target.checked)} /> {t('15 kunlik kod')}</label></div>
   </Modal>
 }
 
 function statusLabel(status: string, t: (text: string) => string) {
-  return ({ PENDING: t('Kutilmoqda'), ACTIVATED: t('Faollashtirilgan'), EXPIRED: t('Muddati tugagan'), REVOKED: t('Bekor qilingan') } as Record<string, string>)[status] || status
+  return ({ PENDING: t('Kutilmoqda'), ACTIVATED: t('Faollashtirilgan'), REVOKED: t('Bekor qilingan') } as Record<string, string>)[status] || status
 }
 
 function formatDate(value: string, language: string) {

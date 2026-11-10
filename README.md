@@ -4,6 +4,12 @@ React + Vite + TypeScript admin web panel. The Electron desktop app is built
 from the repository root; this folder contains the independent content/admin
 panel and the Supabase setup scripts.
 
+The admin panel is installable as a PWA over HTTPS in browsers that support PWA
+installation. Use the install button in the top bar or login screen; the browser
+must show and confirm its own install prompt. If no prompt is available, use
+the browser's **Install app** / **Add to Home screen** action. On iPhone and
+iPad, open the site in Safari and use **Share → Add to Home Screen**.
+
 ## New Supabase project
 
 1. Create a Supabase project.
@@ -42,6 +48,17 @@ For an existing database, run
 in Dashboard → SQL Editor before using the activation-code restore and permanent
 delete actions. New setups also include these functions in
 [`supabase_full_setup.sql`](./supabase_full_setup.sql).
+
+For browser-site activation codes, run
+[`supabase_web_activation_migration.sql`](./supabase_web_activation_migration.sql)
+in Dashboard → SQL Editor before deploying the updated panel and website (run it
+again to apply the 15-day expiry update and allow web activations to use the
+shared content-sync RPCs on an existing installation). The
+migration stores website codes separately from desktop codes; website codes and
+activated access expire 15 days after code creation. Create them from the
+**Sayt** tab in the activation-code panel. Expired website codes are deleted
+when the website checks activation or the admin refreshes its code list;
+expired desktop codes are deleted when the admin refreshes that list.
 
 ## Install and run
 
@@ -90,6 +107,13 @@ also provides admin-only functions to delete a topic while keeping and
 unassigning its questions, and to move a topic one place up or down within its
 section while renumbering the active topics. Re-run the migration when updating
 an existing database to install these functions.
+
+To reorder questions within a topic, run
+[`supabase_lesson_question_order_migration.sql`](./supabase_lesson_question_order_migration.sql)
+in Dashboard → SQL Editor before deploying the updated admin panel and website.
+The migration adds a shared lesson order for base and admin-added questions,
+admin-only move permissions, and a website sync endpoint so tests use the saved
+order. It does not change the desktop application.
 
 The desktop sync contract is:
 
@@ -141,6 +165,7 @@ The desktop sync contract is:
 
 - `supabase_full_setup.sql` — schema, RLS, activation, admin functions, and sync.
 - `supabase_admin_redesign_migration.sql` — additive admin and desktop-sync contract.
+- `supabase_lesson_question_order_migration.sql` — persistent topic question ordering.
 - `supabase_auth_profile_setup.sql` — optional admin profile editing.
 - `supabase_activation_code_fix.sql` — optional crypto search-path fix.
 - `../Base/question_bank_seed.sql` — generated data seed for the source JSON.

@@ -68,6 +68,7 @@ interface BaseQuestionRow {
   id: number
   source: 'base' | 'admin_new'
   lesson_id: number | null
+  lesson_sort_order: number | null
   text: Partial<LocalizedText>
 }
 
@@ -82,6 +83,54 @@ const QUESTION_MOVE_WINDOW_MS = 10 * 60 * 1000
 
 const questionKey = (question: BaseQuestionRow) =>
   `${question.source}:${question.id}`
+
+function autoScrollDragTarget(source: HTMLElement | undefined, pointerY: number) {
+  const edgeSize = 76
+  const maxStep = 22
+  let element = source?.parentElement ?? null
+  while (element && element !== document.body && element !== document.documentElement) {
+    const overflowY = window.getComputedStyle(element).overflowY
+    const canScroll =
+      (overflowY === 'auto' || overflowY === 'scroll') &&
+      element.scrollHeight > element.clientHeight
+    if (canScroll) {
+      const bounds = element.getBoundingClientRect()
+      const distanceFromTop = pointerY - bounds.top
+      const distanceFromBottom = bounds.bottom - pointerY
+      if (distanceFromTop < edgeSize && element.scrollTop > 0) {
+        const step = Math.min(maxStep, Math.ceil((edgeSize - distanceFromTop) / 3))
+        element.scrollTop = Math.max(0, element.scrollTop - step)
+        return
+      }
+      if (
+        distanceFromBottom < edgeSize &&
+        element.scrollTop + element.clientHeight < element.scrollHeight
+      ) {
+        const step = Math.min(maxStep, Math.ceil((edgeSize - distanceFromBottom) / 3))
+        element.scrollTop = Math.min(
+          element.scrollHeight - element.clientHeight,
+          element.scrollTop + step
+        )
+        return
+      }
+    }
+    element = element.parentElement
+  }
+
+  const page = document.scrollingElement
+  if (!page) return
+  if (pointerY < edgeSize && page.scrollTop > 0) {
+    page.scrollTop = Math.max(0, page.scrollTop - maxStep)
+  } else if (
+    pointerY > window.innerHeight - edgeSize &&
+    page.scrollTop + page.clientHeight < page.scrollHeight
+  ) {
+    page.scrollTop = Math.min(
+      page.scrollHeight - page.clientHeight,
+      page.scrollTop + maxStep
+    )
+  }
+}
 
 async function fetchPendingMoves(
   request: (
@@ -151,8 +200,10 @@ export default function Chapters() {
   const dragPointerId = useRef<number | null>(null)
   const dragOffsetY = useRef(0)
   const dragStartRect = useRef<DOMRect | null>(null)
+  const dragPointerX = useRef(0)
   const dragPointerY = useRef(0)
   const dragTargetIndex = useRef<number | null>(null)
+  const lessonDragFrame = useRef<number | null>(null)
   const lessonRowElements = useRef(new Map<number, HTMLElement>())
   const previousLessonRects = useRef<Map<number, DOMRect> | null>(null)
   const [draggingLessonId, setDraggingLessonId] = useState<number | null>(null)
@@ -221,7 +272,8 @@ export default function Chapters() {
   }, [draggingLessonId, dropTargetIndex])
   const availableLessons = lessons.filter(
     (lesson) =>
-      (lesson.section_id !== activeSectionId || lesson.is_deleted) &&
+      lesson.section_id === null &&
+      !lesson.is_deleted &&
       normalizeSearchText(
         Object.values(lesson.title || {})
           .filter((value): value is string => typeof value === 'string')
@@ -442,6 +494,56 @@ export default function Chapters() {
   }, [load, pendingMoveExpiry, restoreExpiredQuestionMoves])
 
   useEffect(() => {
+    const updateLessonDropTarget = (clientX: number, clientY: number) => {
+      const target = document
+        .elementFromPoint(clientX, clientY)
+        ?.closest<HTMLElement>('[data-lesson-id]')
+      const targetId = target ? Number(target.dataset.lessonId) : null
+      const sourceId = dragSourceLessonId.current
+      const remainingLessons = sectionLessons.filter(
+        (lesson) => lesson.id !== sourceId
+      )
+      if (targetId !== null && targetId !== sourceId) {
+        const targetIndex = remainingLessons.findIndex(
+          (lesson) => lesson.id === targetId
+        )
+        if (targetIndex >= 0 && target) {
+          const midpoint =
+            target.getBoundingClientRect().top + target.clientHeight / 2
+          const nextIndex = Math.min(
+            remainingLessons.length,
+            targetIndex + Number(clientY >= midpoint)
+          )
+          dragTargetIndex.current = nextIndex
+          setDropTargetIndex(nextIndex)
+          return
+        }
+      }
+      const list = document.querySelector<HTMLElement>('.chapter-lessons')
+      if (list) {
+        const bounds = list.getBoundingClientRect()
+        const nextIndex =
+          clientY < bounds.top
+            ? 0
+            : clientY > bounds.bottom
+              ? remainingLessons.length
+              : dragTargetIndex.current ?? 0
+        dragTargetIndex.current = nextIndex
+        setDropTargetIndex(nextIndex)
+      }
+    }
+
+    const autoScrollLessonDrag = () => {
+      if (!dragActivated.current || dragSourceLessonId.current === null) {
+        lessonDragFrame.current = null
+        return
+      }
+      const source = lessonRowElements.current.get(dragSourceLessonId.current)
+      autoScrollDragTarget(source, dragPointerY.current)
+      updateLessonDropTarget(dragPointerX.current, dragPointerY.current)
+      lessonDragFrame.current = window.requestAnimationFrame(autoScrollLessonDrag)
+    }
+
     const finishLessonDrag = (event: PointerEvent) => {
       if (
         dragPointerId.current !== null &&
@@ -456,6 +558,10 @@ export default function Chapters() {
       dragPointerId.current = null
       dragStartRect.current = null
       dragTargetIndex.current = null
+      if (lessonDragFrame.current !== null) {
+        window.cancelAnimationFrame(lessonDragFrame.current)
+        lessonDragFrame.current = null
+      }
       setDraggingLessonId(null)
       setDragPosition(null)
       setDropTargetIndex(null)
@@ -466,6 +572,7 @@ export default function Chapters() {
     const trackLessonDrag = (event: PointerEvent) => {
       if (!dragActivated.current) return
       if (event.pointerId !== dragPointerId.current) return
+      dragPointerX.current = event.clientX
       dragPointerY.current = event.clientY
       setDragPosition((current) =>
         current
@@ -475,40 +582,9 @@ export default function Chapters() {
             }
           : current
       )
-      const target = document
-        .elementFromPoint(event.clientX, event.clientY)
-        ?.closest<HTMLElement>('[data-lesson-id]')
-      const targetId = target ? Number(target.dataset.lessonId) : null
-      const sourceId = dragSourceLessonId.current
-      const remainingLessons = sectionLessons.filter(
-        (lesson) => lesson.id !== sourceId
-      )
-      if (targetId !== null && targetId !== sourceId) {
-        const targetIndex = remainingLessons.findIndex(
-          (lesson) => lesson.id === targetId
-        )
-        if (targetIndex >= 0 && target) {
-          const midpoint = target.getBoundingClientRect().top + target.clientHeight / 2
-          const nextIndex = Math.min(
-            remainingLessons.length,
-            targetIndex + (event.clientY >= midpoint ? 1 : 0)
-          )
-          dragTargetIndex.current = nextIndex
-          setDropTargetIndex(nextIndex)
-          return
-        }
-      }
-      const list = document.querySelector<HTMLElement>('.chapter-lessons')
-      if (list) {
-        const bounds = list.getBoundingClientRect()
-        const nextIndex =
-          event.clientY < bounds.top
-            ? 0
-            : event.clientY > bounds.bottom
-              ? remainingLessons.length
-              : dragTargetIndex.current ?? 0
-        dragTargetIndex.current = nextIndex
-        setDropTargetIndex(nextIndex)
+      updateLessonDropTarget(event.clientX, event.clientY)
+      if (lessonDragFrame.current === null) {
+        lessonDragFrame.current = window.requestAnimationFrame(autoScrollLessonDrag)
       }
     }
 
@@ -617,6 +693,15 @@ export default function Chapters() {
 
   async function toggleLessonAssignment(lesson: BaseLesson, checked: boolean) {
     if (checked && !activeSection) return
+    if (!checked) {
+      const confirmed = await confirm({
+        title: t('Mavzuni bo‘limdan ajratish'),
+        message: t('Ushbu mavzuni bo‘limdan ajratmoqchimisiz?'),
+        confirmLabel: t('Ajratish'),
+        danger: true,
+      })
+      if (!confirmed) return
+    }
     setBusyTopicId(lesson.id)
     setError('')
     try {
@@ -825,6 +910,47 @@ export default function Chapters() {
                 >
                   <span className="lesson-order">{index + 1}</span>
                   <button
+                    className="icon-button topic-reorder-handle"
+                    type="button"
+                    title={t('Mavzuni yuqoriga yoki pastga sudrash uchun bosing va torting')}
+                    aria-label={`${localizedTextForLanguage(lesson.title, language) || t('Mavzu')} ${t('mavzuni yuqoriga yoki pastga sudrash uchun bosing va torting')}`}
+                    disabled={busyTopicId !== null}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || busyTopicId !== null) return
+                      event.preventDefault()
+                      dragSourceLessonId.current = lesson.id
+                      dragPointerId.current = event.pointerId
+                      dragPointerX.current = event.clientX
+                      dragPointerY.current = event.clientY
+                      dragOffsetY.current =
+                        event.clientY -
+                        event.currentTarget
+                          .closest('.lesson-row')!
+                          .getBoundingClientRect().top
+                      const row = event.currentTarget.closest('.lesson-row')
+                      if (!row) return
+                      dragStartRect.current = row.getBoundingClientRect()
+                      const originalIndex = sectionLessons.findIndex(
+                        (item) => item.id === lesson.id
+                      )
+                      dragTargetIndex.current = originalIndex
+                      setDropTargetIndex(originalIndex)
+                      const rect = dragStartRect.current
+                      dragActivated.current = true
+                      setDraggingLessonId(lesson.id)
+                      setDragPosition({
+                        left: rect.left,
+                        width: rect.width,
+                        top: dragPointerY.current - dragOffsetY.current,
+                      })
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01" />
+                    </svg>
+                  </button>
+                  <button
                     type="button"
                     className="lesson-copy lesson-open-questions"
                     onClick={() => {
@@ -848,54 +974,6 @@ export default function Chapters() {
                   </button>
                   <div className="row-actions">
                     <button
-                      className="icon-button topic-reorder-handle"
-                      type="button"
-                      title={t('Mavzuni yuqoriga yoki pastga sudrash uchun bosing va torting')}
-                      aria-label={`${localizedTextForLanguage(lesson.title, language) || t('Mavzu')} ${t('mavzuni yuqoriga yoki pastga sudrash uchun bosing va torting')}`}
-                      disabled={busyTopicId !== null}
-                      onContextMenu={(event) => event.preventDefault()}
-                      onPointerDown={(event) => {
-                        if (event.button !== 0 || busyTopicId !== null) return
-                        event.preventDefault()
-                        dragSourceLessonId.current = lesson.id
-                        dragPointerId.current = event.pointerId
-                        dragPointerY.current = event.clientY
-                        dragOffsetY.current =
-                          event.clientY -
-                          event.currentTarget
-                            .closest('.lesson-row')!
-                            .getBoundingClientRect().top
-                        const row = event.currentTarget.closest('.lesson-row')
-                        if (!row) return
-                        dragStartRect.current = row.getBoundingClientRect()
-                        const originalIndex = sectionLessons.findIndex(
-                          (item) => item.id === lesson.id
-                        )
-                        dragTargetIndex.current = originalIndex
-                        setDropTargetIndex(originalIndex)
-                        const rect = dragStartRect.current
-                        dragActivated.current = true
-                        setDraggingLessonId(lesson.id)
-                        setDragPosition({
-                          left: rect.left,
-                          width: rect.width,
-                          top: dragPointerY.current - dragOffsetY.current,
-                        })
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01" />
-                      </svg>
-                    </button>
-                    <input
-                      className="topic-assignment-checkbox"
-                      type="checkbox"
-                      checked
-                      disabled={busyTopicId !== null}
-                      aria-label={`${localizedTextForLanguage(lesson.title, language) || t('Mavzu')} ${t('ni bo‘limdan ajratish')}`}
-                      onChange={() => toggleLessonAssignment(lesson, false)}
-                    />
-                    <button
                       className="icon-button"
                       title={t('Mavzular bo‘limida topish')}
                       aria-label={`${localizedTextForLanguage(lesson.title, language) || t('Mavzu')} ${t('mavzular bo‘limida topish')}`}
@@ -907,6 +985,14 @@ export default function Chapters() {
                     >
                       👁
                     </button>
+                    <input
+                      className="topic-assignment-checkbox"
+                      type="checkbox"
+                      checked
+                      disabled={busyTopicId !== null}
+                      aria-label={`${localizedTextForLanguage(lesson.title, language) || t('Mavzu')} ${t('ni bo‘limdan ajratish')}`}
+                      onChange={() => toggleLessonAssignment(lesson, false)}
+                    />
                   </div>
                 </article>
                 </Fragment>
@@ -1005,20 +1091,6 @@ export default function Chapters() {
           ) : (
             <div className="lesson-attach-list">
               {availableLessons.map((lesson) => {
-                  const previousSection = sections.find(
-                    (section) => section.id === lesson.section_id
-                  )
-                  const previousSectionNumber = previousSection
-                    ? sections.findIndex(
-                        (section) => section.id === previousSection.id
-                      ) + 1
-                    : 0
-                  const previousSectionTitle = previousSection
-                    ? localizedTextForLanguage(
-                        sectionTitle(previousSection, previousSectionNumber),
-                        language
-                      )
-                    : t('Biriktirilmagan')
                   return (
                     <label className="lesson-attach-option" key={lesson.id}>
                       <input
@@ -1037,20 +1109,16 @@ export default function Chapters() {
                           {localizedTextForLanguage(lesson.title, language) ||
                             t('Nomsiz mavzu')}
                         </strong>
-                        <small>{t('Hozirgi bo‘limi:')} {previousSectionTitle}</small>
+                        <small>{t('Biriktirilmagan')}</small>
                       </span>
                     </label>
                   )
                 })}
             </div>
           )}
-          {selectedLessonIds.size === 0 &&
-            lessons.some(
-              (lesson) =>
-                lesson.section_id !== activeSection.id || lesson.is_deleted
-            ) && (
+          {selectedLessonIds.size === 0 && availableLessons.length === 0 && (
               <p className="lesson-attach-hint">
-                {t('Bo‘limga biriktirish uchun kamida bitta mavzuni tanlang.')}
+                {t('Biriktirilmagan mavzu topilmadi.')}
               </p>
             )}
         </Modal>
@@ -1080,6 +1148,10 @@ async function fetchQuestions(
           id: Number(row.id),
           source,
           lesson_id: row.lesson_id === null ? null : Number(row.lesson_id),
+          lesson_sort_order:
+            row.lesson_sort_order === null || row.lesson_sort_order === undefined
+              ? null
+              : Number(row.lesson_sort_order),
           text: (localized as Partial<LocalizedText>) || {
             'uz-Latn': String(row.text || ''),
           },
@@ -1104,12 +1176,28 @@ function LessonQuestionsEditor({
   onViewQuestion: (question: BaseQuestionRow) => void
 }) {
   const { language, t } = useSiteLanguage()
+  const confirm = useConfirm()
   const [questions, setQuestions] = useState<BaseQuestionRow[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [draggingQuestionKey, setDraggingQuestionKey] = useState<string | null>(null)
+  const [questionDropTargetIndex, setQuestionDropTargetIndex] = useState<number | null>(null)
+  const [questionDragPosition, setQuestionDragPosition] = useState<{
+    left: number
+    width: number
+    top: number
+  } | null>(null)
+  const questionDragPointerId = useRef<number | null>(null)
+  const questionDragOffsetY = useRef(0)
+  const questionDragPointerX = useRef(0)
+  const questionDragPointerY = useRef(0)
+  const questionDragTargetIndex = useRef<number | null>(null)
+  const questionDragSourceKey = useRef<string | null>(null)
+  const questionRowElements = useRef(new Map<string, HTMLElement>())
+  const questionDragFrame = useRef<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -1121,7 +1209,7 @@ function LessonQuestionsEditor({
             (from, to) =>
               client
                 .from('base_questions')
-                .select('id,lesson_id,text')
+                .select('id,lesson_id,lesson_sort_order,text')
                 .eq('is_deleted', false)
                 .order('id')
                 .range(from, to),
@@ -1131,7 +1219,7 @@ function LessonQuestionsEditor({
             (from, to) =>
               client
                 .from('admin_new_questions')
-                .select('id,lesson_id,text,text_i18n')
+                .select('id,lesson_id,lesson_sort_order,text,text_i18n')
                 .eq('is_deleted', false)
                 .order('id')
                 .range(from, to),
@@ -1171,9 +1259,29 @@ function LessonQuestionsEditor({
       .sort((left, right) => left.id - right.id)
   }, [questions, query])
 
-  const assignedQuestions = questions.filter(
-    (question) => question.lesson_id === lesson.id
-  )
+  const assignedQuestions = questions
+    .filter((question) => question.lesson_id === lesson.id)
+    .sort(
+      (left, right) =>
+        (left.lesson_sort_order ?? Number.MAX_SAFE_INTEGER) -
+          (right.lesson_sort_order ?? Number.MAX_SAFE_INTEGER) ||
+        (left.source === right.source ? 0 : left.source === 'base' ? -1 : 1) ||
+        left.id - right.id
+    )
+  const displayedAssignedQuestions = (() => {
+    if (draggingQuestionKey === null || questionDropTargetIndex === null) {
+      return assignedQuestions
+    }
+    const source = assignedQuestions.find(
+      (question) => questionKey(question) === draggingQuestionKey
+    )
+    if (!source) return assignedQuestions
+    const reordered = assignedQuestions.filter(
+      (question) => questionKey(question) !== draggingQuestionKey
+    )
+    reordered.splice(questionDropTargetIndex, 0, source)
+    return reordered
+  })()
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1197,8 +1305,10 @@ function LessonQuestionsEditor({
             .from(table)
             .update({
               lesson_id: lesson.id,
+              lesson_sort_order: null,
               pending_lesson_id: null,
               pending_unassigned_at: null,
+              updated_at: new Date().toISOString(),
             })
             .in('id', idsToAdd)
           if (addError) throw addError
@@ -1208,7 +1318,7 @@ function LessonQuestionsEditor({
       setQuestions((current) =>
         current.map((question) =>
           addedKeys.has(questionKey(question))
-            ? { ...question, lesson_id: lesson.id }
+            ? { ...question, lesson_id: lesson.id, lesson_sort_order: null }
             : question
         )
       )
@@ -1222,7 +1332,190 @@ function LessonQuestionsEditor({
     }
   }
 
+  async function moveQuestionTo(question: BaseQuestionRow, targetIndex: number) {
+    const currentIndex = assignedQuestions.findIndex(
+      (item) => questionKey(item) === questionKey(question)
+    )
+    if (
+      currentIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= assignedQuestions.length ||
+      currentIndex === targetIndex
+    ) return
+    setBusy(true)
+    setError('')
+    let completedMoves = 0
+    try {
+      const direction = targetIndex < currentIndex ? 'up' : 'down'
+      for (let index = currentIndex; index !== targetIndex; ) {
+        const { data, error: moveError } = await requireSupabase().rpc(
+          'admin_move_lesson_question',
+          {
+            p_lesson_id: lesson.id,
+            p_question_source: question.source,
+            p_question_id: question.id,
+            p_direction: direction,
+          }
+        )
+        if (moveError) throw moveError
+        if (data !== true) {
+          throw new Error(t('Savol tartibini o‘zgartirib bo‘lmadi. Sahifani yangilang.'))
+        }
+        index += direction === 'up' ? -1 : 1
+        completedMoves += 1
+      }
+
+      const reordered = [...assignedQuestions]
+      const [movedQuestion] = reordered.splice(currentIndex, 1)
+      reordered.splice(targetIndex, 0, movedQuestion)
+      const orderByKey = new Map(
+        reordered.map((item, order) => [questionKey(item), order])
+      )
+      setQuestions((current) =>
+        current.map((item) => {
+          const order = orderByKey.get(questionKey(item))
+          return order === undefined ? item : { ...item, lesson_sort_order: order }
+        })
+      )
+    } catch (reason) {
+      if (completedMoves > 0) onSaved()
+      setError(getErrorMessage(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const updateQuestionDropTarget = (clientX: number, clientY: number) => {
+      const target = document
+        .elementFromPoint(clientX, clientY)
+        ?.closest<HTMLElement>('[data-question-key]')
+      const targetKey = target?.dataset.questionKey
+      const sourceKey = questionDragSourceKey.current
+      const remainingQuestions = assignedQuestions.filter(
+        (question) => questionKey(question) !== sourceKey
+      )
+      if (targetKey && targetKey !== sourceKey && target) {
+        const targetIndex = remainingQuestions.findIndex(
+          (question) => questionKey(question) === targetKey
+        )
+        if (targetIndex >= 0) {
+          const midpoint =
+            target.getBoundingClientRect().top + target.clientHeight / 2
+          const nextIndex = Math.min(
+            remainingQuestions.length,
+            targetIndex + Number(clientY >= midpoint)
+          )
+          questionDragTargetIndex.current = nextIndex
+          setQuestionDropTargetIndex(nextIndex)
+          return
+        }
+      }
+
+      const list = document.querySelector<HTMLElement>(
+        '.lesson-question-page .lesson-question-list'
+      )
+      if (list) {
+        const bounds = list.getBoundingClientRect()
+        const nextIndex =
+          clientY < bounds.top
+            ? 0
+            : clientY > bounds.bottom
+              ? remainingQuestions.length
+              : questionDragTargetIndex.current ?? 0
+        questionDragTargetIndex.current = nextIndex
+        setQuestionDropTargetIndex(nextIndex)
+      }
+    }
+
+    const autoScrollQuestionDrag = () => {
+      if (
+        questionDragPointerId.current === null ||
+        questionDragSourceKey.current === null
+      ) {
+        questionDragFrame.current = null
+        return
+      }
+      const source = questionRowElements.current.get(
+        questionDragSourceKey.current
+      )
+      autoScrollDragTarget(source, questionDragPointerY.current)
+      updateQuestionDropTarget(
+        questionDragPointerX.current,
+        questionDragPointerY.current
+      )
+      questionDragFrame.current = window.requestAnimationFrame(
+        autoScrollQuestionDrag
+      )
+    }
+
+    const finishQuestionDrag = (event: PointerEvent) => {
+      if (
+        questionDragPointerId.current !== null &&
+        event.pointerId !== questionDragPointerId.current
+      ) return
+      const sourceKey = questionDragSourceKey.current
+      const targetIndex = questionDragTargetIndex.current
+      const source = assignedQuestions.find(
+        (question) => questionKey(question) === sourceKey
+      )
+      questionDragPointerId.current = null
+      questionDragSourceKey.current = null
+      questionDragTargetIndex.current = null
+      if (questionDragFrame.current !== null) {
+        window.cancelAnimationFrame(questionDragFrame.current)
+        questionDragFrame.current = null
+      }
+      setDraggingQuestionKey(null)
+      setQuestionDragPosition(null)
+      setQuestionDropTargetIndex(null)
+      if (source && targetIndex !== null) {
+        void moveQuestionTo(
+          source,
+          Math.min(targetIndex, assignedQuestions.length - 1)
+        )
+      }
+    }
+
+    const trackQuestionDrag = (event: PointerEvent) => {
+      if (
+        questionDragPointerId.current === null ||
+        event.pointerId !== questionDragPointerId.current
+      ) return
+      questionDragPointerX.current = event.clientX
+      questionDragPointerY.current = event.clientY
+      setQuestionDragPosition((current) =>
+        current
+          ? { ...current, top: event.clientY - questionDragOffsetY.current }
+          : current
+      )
+      updateQuestionDropTarget(event.clientX, event.clientY)
+      if (questionDragFrame.current === null) {
+        questionDragFrame.current = window.requestAnimationFrame(
+          autoScrollQuestionDrag
+        )
+      }
+    }
+
+    document.addEventListener('pointerup', finishQuestionDrag)
+    document.addEventListener('pointercancel', finishQuestionDrag)
+    document.addEventListener('pointermove', trackQuestionDrag)
+    return () => {
+      document.removeEventListener('pointerup', finishQuestionDrag)
+      document.removeEventListener('pointercancel', finishQuestionDrag)
+      document.removeEventListener('pointermove', trackQuestionDrag)
+    }
+  }, [assignedQuestions])
+
   async function unassign(question: BaseQuestionRow) {
+    const confirmed = await confirm({
+      title: t('Savolni mavzudan ajratish'),
+      message: t('Ushbu savolni mavzudan ajratmoqchimisiz?'),
+      confirmLabel: t('Ajratish'),
+      danger: true,
+    })
+    if (!confirmed) return
+
     setBusy(true)
     setError('')
     try {
@@ -1232,15 +1525,17 @@ function LessonQuestionsEditor({
         .from(table)
         .update({
           lesson_id: null,
+          lesson_sort_order: null,
           pending_lesson_id: lesson.id,
           pending_unassigned_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .eq('id', question.id)
       if (updateError) throw updateError
       setQuestions((current) =>
         current.map((item) =>
           questionKey(item) === questionKey(question)
-            ? { ...item, lesson_id: null }
+            ? { ...item, lesson_id: null, lesson_sort_order: null }
             : item
         )
       )
@@ -1264,12 +1559,75 @@ function LessonQuestionsEditor({
           </div>
         ) : (
           <div className="lesson-question-list">
-            {assignedQuestions.map((question, index) => (
+            {displayedAssignedQuestions.map((question, index) => (
+              <Fragment key={questionKey(question)}>
+              {draggingQuestionKey !== null &&
+                questionDropTargetIndex === index && (
+                  <div
+                    className="lesson-question-option lesson-question-drop-placeholder"
+                    aria-hidden="true"
+                  />
+                )}
               <div
-                className="lesson-question-option"
-                key={questionKey(question)}
+                ref={(element) => {
+                  const key = questionKey(question)
+                  if (element) questionRowElements.current.set(key, element)
+                  else questionRowElements.current.delete(key)
+                }}
+                data-question-key={questionKey(question)}
+                className={`lesson-question-option${draggingQuestionKey === questionKey(question) ? ' is-reordering' : ''}`}
+                style={
+                  draggingQuestionKey === questionKey(question) && questionDragPosition
+                    ? {
+                        position: 'fixed',
+                        left: questionDragPosition.left,
+                        top: questionDragPosition.top,
+                        width: questionDragPosition.width,
+                        zIndex: 50,
+                      }
+                    : undefined
+                }
               >
                 <span className="lesson-order">{index + 1}</span>
+                <button
+                  type="button"
+                  className="icon-button topic-reorder-handle"
+                  title={t('Savolni yuqoriga yoki pastga sudrash uchun bosing va torting')}
+                  aria-label={t('Savolni yuqoriga yoki pastga sudrash uchun bosing va torting')}
+                  disabled={busy}
+                  onContextMenu={(event) => event.preventDefault()}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0 || busy) return
+                    event.preventDefault()
+                    const row = event.currentTarget.closest<HTMLElement>(
+                      '.lesson-question-option'
+                    )
+                    if (!row) return
+                    const rect = row.getBoundingClientRect()
+                    const sourceKey = questionKey(question)
+                    const originalIndex = assignedQuestions.findIndex(
+                      (item) => questionKey(item) === sourceKey
+                    )
+                    if (originalIndex < 0) return
+                    questionDragPointerId.current = event.pointerId
+                    questionDragPointerX.current = event.clientX
+                    questionDragPointerY.current = event.clientY
+                    questionDragSourceKey.current = sourceKey
+                    questionDragOffsetY.current = event.clientY - rect.top
+                    questionDragTargetIndex.current = originalIndex
+                    setQuestionDropTargetIndex(originalIndex)
+                    setDraggingQuestionKey(sourceKey)
+                    setQuestionDragPosition({
+                      left: rect.left,
+                      width: rect.width,
+                      top: rect.top,
+                    })
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01" />
+                  </svg>
+                </button>
                 <span className="lesson-question-assigned-copy">
                   <strong>
                     {localizedTextForLanguage(question.text, language) ||
@@ -1303,6 +1661,7 @@ function LessonQuestionsEditor({
                   />
                 </div>
               </div>
+              </Fragment>
             ))}
           </div>
         )}
