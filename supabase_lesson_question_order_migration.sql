@@ -173,14 +173,23 @@ begin
                       assigned.source_order, assigned.question_id
            ) - 1)::integer
       from (
-        select 'base'::text as question_source, id as question_id, lesson_id,
-               lesson_sort_order, 0 as source_order
-          from public.base_questions
-         where lesson_id is not null and not is_deleted
+        select 'base'::text as question_source,
+               base_question.id as question_id,
+               base_question.lesson_id,
+               base_question.lesson_sort_order,
+               0 as source_order
+          from public.base_questions as base_question
+         where base_question.lesson_id is not null
+           and not base_question.is_deleted
         union all
-        select 'admin_new', id, lesson_id, lesson_sort_order, 1
-          from public.admin_new_questions
-         where lesson_id is not null and not is_deleted
+        select 'admin_new',
+               admin_question.id,
+               admin_question.lesson_id,
+               admin_question.lesson_sort_order,
+               1
+          from public.admin_new_questions as admin_question
+         where admin_question.lesson_id is not null
+           and not admin_question.is_deleted
       ) assigned;
 end $$;
 

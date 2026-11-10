@@ -15,6 +15,7 @@
   --white: #fff;
   --blue: #3461ff;
   --navy: #172237;
+  --admin-wallpaper: url('/app-theme-dark.png');
 }
 .pwa-install-button span {
   display: none;
@@ -3838,13 +3839,18 @@ td {
 .admin-scale-frame {
   width: 100%;
   min-height: 100vh;
-  background: #131a26;
+  background-color: var(--canvas);
+  background-image: var(--admin-wallpaper);
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 .admin-shell {
   display: flex;
   min-height: 100vh;
   flex-direction: column;
-  background: #131a26;
+  background: transparent;
 }
 .admin-shell {
   --admin-ui-font-scale: var(--admin-ui-scale-factor, 1.2);
@@ -4271,7 +4277,7 @@ td {
   width: 100%;
   min-height: calc(100vh - calc(76px * var(--admin-ui-font-scale, 1)));
   margin: 0;
-  background: #131a26;
+  background: transparent;
 }
 .admin-shell .content-area {
   width: min(100%, calc(1540px * var(--admin-ui-font-scale, 1)));
@@ -4805,13 +4811,17 @@ td {
   --canvas: #f3f5f9;
   --white: #fff;
   --navy: #e8edf5;
+  --admin-wallpaper: url('/app-theme-light.png');
 }
 
 :root[data-theme='light'] body,
 :root[data-theme='light'] .admin-shell,
 :root[data-theme='light'] .admin-shell .main-area {
   color: #172033;
-  background: #f3f5f9;
+}
+:root[data-theme='light'] .admin-shell,
+:root[data-theme='light'] .admin-shell .main-area {
+  background: transparent;
 }
 :root[data-theme='light'] .admin-topbar {
   border-color: #e4e9f1;
@@ -5143,54 +5153,7 @@ td {
       6vw,
       calc(80px * var(--admin-ui-font-scale, 1))
     );
-  isolation: isolate;
-  background:
-    radial-gradient(ellipse at 50% 94%, #003fba80 0, transparent 33%),
-    linear-gradient(180deg, #080b11 0%, #080b11 66%, #03060b 100%);
-}
-.admin-home-stage::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  background:
-    linear-gradient(
-      132deg,
-      transparent 0 31%,
-      #06111f 31.2%,
-      #172438 31.8%,
-      #077cff 32.2%,
-      transparent 32.6%
-    ),
-    linear-gradient(
-      228deg,
-      transparent 0 31%,
-      #06111f 31.2%,
-      #172438 31.8%,
-      #077cff 32.2%,
-      transparent 32.6%
-    ),
-    linear-gradient(
-      180deg,
-      transparent 0 75%,
-      #006aff 75.2%,
-      #073b8c 76%,
-      transparent 86%
-    );
-  content: '';
-  opacity: 0.9;
-  pointer-events: none;
-}
-.admin-home-stage::after {
-  position: absolute;
-  z-index: -1;
-  right: -15%;
-  bottom: -34%;
-  left: -15%;
-  height: 55%;
-  background: radial-gradient(ellipse at 50% 0, #126bff55, transparent 56%);
-  content: '';
-  filter: blur(18px);
-  pointer-events: none;
+  background: transparent;
 }
 .admin-home-grid {
   display: grid;
@@ -5257,9 +5220,7 @@ td {
   background: #8070d8;
 }
 :root[data-theme='light'] .admin-home-stage {
-  background:
-    radial-gradient(ellipse at 50% 94%, #0c55bd70 0, transparent 33%),
-    linear-gradient(180deg, #121722 0%, #121722 66%, #080c13 100%);
+  background: transparent;
 }
 
 @media (max-width: 900px) {

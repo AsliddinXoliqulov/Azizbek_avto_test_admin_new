@@ -76,7 +76,13 @@ const siteLanguageOptions: { value: SiteLanguage; label: string }[] = [
   { value: 'ru', label: 'RU' },
 ]
 
-function SiteLanguageSwitcher({ className = '' }: { className?: string }) {
+function SiteLanguageSwitcher({
+  className = '',
+  compactOnMobile = true,
+}: {
+  className?: string
+  compactOnMobile?: boolean
+}) {
   const { language, setLanguage, t } = useSiteLanguage()
   const [compact, setCompact] = useState(() =>
     window.matchMedia('(max-width: 620px)').matches
@@ -106,7 +112,7 @@ function SiteLanguageSwitcher({ className = '' }: { className?: string }) {
       role="group"
       aria-label={t('Sayt tili')}
     >
-      {compact ? (
+      {compact && compactOnMobile ? (
         <button
           type="button"
           className="is-selected"
@@ -181,7 +187,10 @@ function Login() {
   return (
     <main className="login-page">
       <section className="login-card">
-        <SiteLanguageSwitcher className="login-language-switch" />
+        <SiteLanguageSwitcher
+          className="login-language-switch"
+          compactOnMobile={false}
+        />
         <img
           className="brand-logo brand-logo-login"
           src={logo}
