@@ -60,6 +60,18 @@ activated access expire 15 days after code creation. Create them from the
 when the website checks activation or the admin refreshes its code list;
 expired desktop codes are deleted when the admin refreshes that list.
 
+Sayt kodlarini qayta ishlatiladigan 6 xonali raqamli formatga o'tkazish uchun
+[`supabase_web_activation_reusable_codes_migration.sql`](./supabase_web_activation_reusable_codes_migration.sql)
+faylini yuqoridagi web aktivatsiya migratsiyasidan keyin SQL Editor'da ishga
+tushiring. Kod yaratilgan vaqtdan boshlab 15 kun davomida turli qurilmalarda
+ishlaydi; desktop kodlariga ta'sir qilmaydi.
+
+Saytdagi xato va saqlangan savollarni aktivatsiya kodi akkauntiga bog'lash
+uchun [`supabase_web_activation_user_progress_migration.sql`](./supabase_web_activation_user_progress_migration.sql)
+faylini qayta ishlatiladigan kodlar migratsiyasidan keyin ishga tushiring.
+Jadvallarga to'g'ridan-to'g'ri kirish yopiq; ilova ma'lumotlarni aktivatsiya
+qilingan qurilma orqali RPC funksiyalari bilan sinxronlaydi.
+
 ## Install and run
 
 ```powershell

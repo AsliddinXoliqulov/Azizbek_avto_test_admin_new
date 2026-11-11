@@ -142,7 +142,9 @@ export default function Codes() {
   async function revoke(token: ActivationToken) {
     const confirmed = await confirm({
       title: t('Aktivatsiya kodini bekor qilish'),
-      message: t('{0} kodini bekor qilasizmi? Ulangan qurilma keyingi tekshiruvda bloklanadi.').replace('{0}', token.code),
+      message: platform === 'website'
+        ? t('{0} kodini bekor qilasizmi? Bu kod bilan faollashtirilgan barcha qurilmalar bloklanadi.').replace('{0}', token.code)
+        : t('{0} kodini bekor qilasizmi? Ulangan qurilma keyingi tekshiruvda bloklanadi.').replace('{0}', token.code),
       confirmLabel: t('Bekor qilish'),
       danger: true,
     })
@@ -163,14 +165,17 @@ export default function Codes() {
   async function reactivate(token: ActivationToken) {
     const confirmed = await confirm({
       title: t('Kodni qayta faollashtirish'),
-      message: token.device_id
-        ? t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi va faqat avval ulangan qurilmada ishlaydi ({2}…).')
+      message: platform === 'website'
+        ? t('{0} kodini qayta faollashtirasizmi? U 15 kun davomida bir nechta qurilmada ishlaydi.')
           .replace('{0}', token.code)
-          .replace('{1}', t(platform === 'website' ? '15 kun' : '1 soat'))
-          .replace('{2}', token.device_id.slice(0, 10))
-        : t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi; bu kod avval qurilmaga ulanmagan.')
-          .replace('{0}', token.code)
-          .replace('{1}', t(platform === 'website' ? '15 kun' : '1 soat')),
+        : token.device_id
+          ? t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi va faqat avval ulangan qurilmada ishlaydi ({2}…).')
+            .replace('{0}', token.code)
+            .replace('{1}', t('1 soat'))
+            .replace('{2}', token.device_id.slice(0, 10))
+          : t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi; bu kod avval qurilmaga ulanmagan.')
+            .replace('{0}', token.code)
+            .replace('{1}', t('1 soat')),
       confirmLabel: t('Qayta faollashtirish'),
     })
     if (!confirmed) return
@@ -280,7 +285,7 @@ export default function Codes() {
         </div>
         <div className="table-scroll"><table><thead><tr>
           <th><input type="checkbox" aria-label={t('Barcha kodlarni tanlash')} checked={tokens.length > 0 && tokens.every((token) => selectedIds.has(token.id))} onChange={(event) => toggleAllTokens(event.target.checked)} /></th>
-          <th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t('QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
+          <th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t(platform === 'website' ? 'BIRINCHI QURILMA' : 'QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
           {loading ? <tr><td className="table-state" colSpan={7}>{t('Kodlar yuklanmoqda…')}</td></tr>
             : tokens.length === 0 ? <tr><td className="table-state" colSpan={7}>{t('Kodlar topilmadi.')}</td></tr>
               : tokens.map((token) => <tr key={token.id}>
