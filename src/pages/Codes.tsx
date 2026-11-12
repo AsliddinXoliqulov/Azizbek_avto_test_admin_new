@@ -23,6 +23,7 @@ export default function Codes() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null)
+  const [resettingTokenId, setResettingTokenId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -34,10 +35,15 @@ export default function Codes() {
         website ? 'expire_stale_web_activation_tokens' : 'expire_stale_tokens',
       )
       if (expireError) throw expireError
-      let request = client.from(website ? 'web_activation_tokens' : 'activation_tokens')
-        .select('id,code,note,status,created_at,expires_at,device_id,activated_at,created_by')
-        .order('created_at', { ascending: false })
-        .limit(200)
+      let request = website
+        ? client.from('web_activation_tokens')
+          .select('id,code,note,status,created_at,expires_at,device_id,allowed_device_id,activated_at,created_by')
+          .order('created_at', { ascending: false })
+          .limit(200)
+        : client.from('activation_tokens')
+          .select('id,code,note,status,created_at,expires_at,device_id,activated_at,created_by')
+          .order('created_at', { ascending: false })
+          .limit(200)
       if (filter) request = request.eq('status', filter)
       const { data, error: tokenError } = await request
       if (tokenError) throw tokenError
@@ -166,7 +172,7 @@ export default function Codes() {
     const confirmed = await confirm({
       title: t('Kodni qayta faollashtirish'),
       message: platform === 'website'
-        ? t('{0} kodini qayta faollashtirasizmi? U 15 kun davomida bir nechta qurilmada ishlaydi.')
+        ? t('{0} kodini qayta faollashtirasizmi? U 15 kun davomida bir qurilmada ishlaydi.')
           .replace('{0}', token.code)
         : token.device_id
           ? t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi va faqat avval ulangan qurilmada ishlaydi ({2}…).')
@@ -210,6 +216,32 @@ export default function Codes() {
       await load()
     } catch (reason) {
       setError(getErrorMessage(reason))
+    }
+  }
+
+  async function resetDevice(token: ActivationToken) {
+    const confirmed = await confirm({
+      title: t('Qurilmani tiklash'),
+      message: t('{0} kodi qurilma bog‘lanishini yo‘qotadi va keyingi kirishda boshqa qurilmaga bog‘lanadi.')
+        .replace('{0}', token.code),
+      confirmLabel: t('Qurilmani tiklash'),
+      danger: true,
+    })
+    if (!confirmed) return
+    setResettingTokenId(token.id)
+    setError('')
+    try {
+      const { error: rpcError } = await requireSupabase().rpc(
+        platform === 'website' ? 'reset_web_activation_device' : 'reset_activation_device',
+        { p_id: token.id },
+      )
+      if (rpcError) throw rpcError
+      setSuccess(t('{0} kodi uchun qurilma bog‘lanishi tiklandi.').replace('{0}', token.code))
+      await load()
+    } catch (reason) {
+      setError(getErrorMessage(reason))
+    } finally {
+      setResettingTokenId(null)
     }
   }
 
@@ -285,7 +317,7 @@ export default function Codes() {
         </div>
         <div className="table-scroll"><table><thead><tr>
           <th><input type="checkbox" aria-label={t('Barcha kodlarni tanlash')} checked={tokens.length > 0 && tokens.every((token) => selectedIds.has(token.id))} onChange={(event) => toggleAllTokens(event.target.checked)} /></th>
-          <th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t(platform === 'website' ? 'BIRINCHI QURILMA' : 'QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
+          <th>{t('KOD / IZOH')}</th><th>{t('HOLATI')}</th><th>{t('YARATILGAN')}</th><th>{t('MUDDATI')}</th><th>{t('QURILMA')}</th><th className="align-right">{t('AMALLAR')}</th></tr></thead><tbody>
           {loading ? <tr><td className="table-state" colSpan={7}>{t('Kodlar yuklanmoqda…')}</td></tr>
             : tokens.length === 0 ? <tr><td className="table-state" colSpan={7}>{t('Kodlar topilmadi.')}</td></tr>
               : tokens.map((token) => <tr key={token.id}>
@@ -293,8 +325,17 @@ export default function Codes() {
                 <td><div className="token-cell"><div className="token-code"><code>{token.code}</code><button className="icon-button" type="button" onClick={() => void copyCode(token)} title={t(copiedTokenId === token.id ? 'Nusxalandi' : 'Kodni nusxalash')} aria-label={t('{0} kodini nusxalash').replace('{0}', token.code)}>{copiedTokenId === token.id ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3.2 3.2L13 4.5" /></svg> : <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2.5" width="8" height="10" rx="1.5" /><path d="M10.5 13.5v.2a1.3 1.3 0 0 1-1.3 1.3H3.3A1.3 1.3 0 0 1 2 13.7V6.3A1.3 1.3 0 0 1 3.3 5h.2" /></svg>}</button></div><small>{token.note || t('Izoh kiritilmagan')}</small></div></td>
                 <td><span className={`badge ${token.status === 'ACTIVATED' ? 'badge-success' : token.status === 'PENDING' ? 'badge-warning' : 'badge-neutral'}`}><i />{statusLabel(token.status, t)}</span></td>
                 <td>{formatDate(token.created_at, language)}</td><td>{formatDate(token.expires_at, language)}</td>
-                <td><span className="device-id">{token.device_id ? `${token.device_id.slice(0, 10)}…` : '—'}</span></td>
+                <td><span className="device-id">{(token.allowed_device_id || token.device_id) ? `${(token.allowed_device_id || token.device_id)?.slice(0, 10)}…` : '—'}</span></td>
                 <td><div className="row-actions">
+                  {(token.allowed_device_id || token.device_id) && (
+                    <button
+                      className="text-button"
+                      disabled={resettingTokenId === token.id}
+                      onClick={() => void resetDevice(token)}
+                    >
+                      {t(resettingTokenId === token.id ? 'Tiklanmoqda…' : 'Qurilmani tiklash')}
+                    </button>
+                  )}
                   {token.status === 'REVOKED' && (
                     <button className="text-button" onClick={() => void reactivate(token)}>{t('Qayta faollashtirish')}</button>
                   )}

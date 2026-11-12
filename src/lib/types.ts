@@ -104,6 +104,7 @@ export interface ActivationToken {
   created_at: string
   expires_at: string
   device_id: string | null
+  allowed_device_id?: string | null
   activated_at: string | null
   created_by: string | null
 }
