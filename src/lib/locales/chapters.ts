@@ -40,6 +40,7 @@ const chaptersTranslations: Record<string, string> = {
   'Nomsiz bo‘lim': 'Раздел без названия',
   'Bo‘lim qo‘shish': 'Добавить раздел',
   'Keyingi bo‘limni yaratish': 'Создать следующий раздел',
+  'Yangi bo‘lim qo‘shmoqchimisiz?': 'Добавить новый раздел?',
   'Mavzularni bo‘limga biriktirish': 'Привязать темы к разделу',
   'Tanlanganlarni biriktirish': 'Привязать выбранные',
   'Biriktirish uchun boshqa mavjud mavzu yo‘q.':

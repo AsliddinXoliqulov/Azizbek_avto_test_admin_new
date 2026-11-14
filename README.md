@@ -72,6 +72,14 @@ faylini qayta ishlatiladigan kodlar migratsiyasidan keyin ishga tushiring.
 Jadvallarga to'g'ridan-to'g'ri kirish yopiq; ilova ma'lumotlarni aktivatsiya
 qilingan qurilma orqali RPC funksiyalari bilan sinxronlaydi.
 
+Avval [`supabase_single_device_auth_migration.sql`](./supabase_single_device_auth_migration.sql)
+migratsiyasini qo'llagan bo'lsangiz, bitta qurilma cheklovini olib tashlash uchun
+eng oxirida
+[`supabase_web_activation_unlimited_devices_migration.sql`](./supabase_web_activation_unlimited_devices_migration.sql)
+faylini SQL Editor'da ishga tushiring. Sayt kodi 15 kun ichida istalgancha
+brauzer va qurilmada ishlaydi; admin panelda sayt kodlari uchun qurilmani
+tiklash talab qilinmaydi. Desktop kodlariga bu o'zgarish ta'sir qilmaydi.
+
 ## Install and run
 
 ```powershell

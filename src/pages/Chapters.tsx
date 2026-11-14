@@ -599,6 +599,13 @@ export default function Chapters() {
   }, [sectionLessons])
 
   async function addSection() {
+    const confirmed = await confirm({
+      title: t('Bo‘lim qo‘shish'),
+      message: t('Yangi bo‘lim qo‘shmoqchimisiz?'),
+      confirmLabel: t('Bo‘lim qo‘shish'),
+    })
+    if (!confirmed) return
+
     try {
       const maxSortOrder = sections.reduce(
         (max, section) => Math.max(max, section.sort_order),

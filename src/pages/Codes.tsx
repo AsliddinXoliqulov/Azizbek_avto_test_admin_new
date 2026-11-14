@@ -172,7 +172,7 @@ export default function Codes() {
     const confirmed = await confirm({
       title: t('Kodni qayta faollashtirish'),
       message: platform === 'website'
-        ? t('{0} kodini qayta faollashtirasizmi? U 15 kun davomida bir qurilmada ishlaydi.')
+        ? t('{0} kodini qayta faollashtirasizmi? U 15 kun davomida istalgan qurilmada ishlaydi.')
           .replace('{0}', token.code)
         : token.device_id
           ? t('{0} kodini qayta faollashtirasizmi? Kod {1} davomida ochiladi va faqat avval ulangan qurilmada ishlaydi ({2}…).')
@@ -231,10 +231,9 @@ export default function Codes() {
     setResettingTokenId(token.id)
     setError('')
     try {
-      const { error: rpcError } = await requireSupabase().rpc(
-        platform === 'website' ? 'reset_web_activation_device' : 'reset_activation_device',
-        { p_id: token.id },
-      )
+      const { error: rpcError } = await requireSupabase().rpc('reset_activation_device', {
+        p_id: token.id,
+      })
       if (rpcError) throw rpcError
       setSuccess(t('{0} kodi uchun qurilma bog‘lanishi tiklandi.').replace('{0}', token.code))
       await load()
@@ -325,9 +324,11 @@ export default function Codes() {
                 <td><div className="token-cell"><div className="token-code"><code>{token.code}</code><button className="icon-button" type="button" onClick={() => void copyCode(token)} title={t(copiedTokenId === token.id ? 'Nusxalandi' : 'Kodni nusxalash')} aria-label={t('{0} kodini nusxalash').replace('{0}', token.code)}>{copiedTokenId === token.id ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3.2 3.2L13 4.5" /></svg> : <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2.5" width="8" height="10" rx="1.5" /><path d="M10.5 13.5v.2a1.3 1.3 0 0 1-1.3 1.3H3.3A1.3 1.3 0 0 1 2 13.7V6.3A1.3 1.3 0 0 1 3.3 5h.2" /></svg>}</button></div><small>{token.note || t('Izoh kiritilmagan')}</small></div></td>
                 <td><span className={`badge ${token.status === 'ACTIVATED' ? 'badge-success' : token.status === 'PENDING' ? 'badge-warning' : 'badge-neutral'}`}><i />{statusLabel(token.status, t)}</span></td>
                 <td>{formatDate(token.created_at, language)}</td><td>{formatDate(token.expires_at, language)}</td>
-                <td><span className="device-id">{(token.allowed_device_id || token.device_id) ? `${(token.allowed_device_id || token.device_id)?.slice(0, 10)}…` : '—'}</span></td>
+                <td><span className="device-id">{platform === 'website'
+                  ? token.status === 'ACTIVATED' ? t('Ko‘p qurilmada ishlaydi') : '—'
+                  : token.device_id ? `${token.device_id.slice(0, 10)}…` : '—'}</span></td>
                 <td><div className="row-actions">
-                  {(token.allowed_device_id || token.device_id) && (
+                  {platform === 'desktop' && token.device_id && (
                     <button
                       className="text-button"
                       disabled={resettingTokenId === token.id}
